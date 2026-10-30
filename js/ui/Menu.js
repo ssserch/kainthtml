@@ -1,15 +1,33 @@
 // Menús: la barra de menús y los menús emergentes (también los contextuales y los de los botones
-// con opciones). Una entrada es una acción, "-" (separador) o { text, icon, shortcut, checked,
-// enabled, run, submenu }. Aparecen con el fundido de paint.js (kaint.css).
+// con opciones). Una entrada es una acción, "-" (separador), { section } (título de sección) o
+// { text, icon, shortcut, checked, enabled, run, submenu }. Aparecen con el fundido de paint.js (kaint.css).
 import { icon } from "./Icons.js";
 import { mnemonicHtml, plain } from "../i18n.js";
 
 let openMenus = [];
 
+// Como en Windows, pulsar Alt subraya las letras de acceso (kaint.css); un clic o cerrar los
+// menús lo quita.
+function altShortcuts(on) {
+    document.documentElement.classList.toggle("alt-held", on);
+}
+
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Alt")
+        altShortcuts(true);
+}, true);
+document.addEventListener("keyup", (e) => {
+    if (e.key === "Alt" && !openMenus.length)
+        altShortcuts(false);
+}, true);
+document.addEventListener("pointerdown", () => altShortcuts(false), true);
+window.addEventListener("blur", () => altShortcuts(false));
+
 export function closeMenus() {
     for (const m of openMenus)
         m.remove();
     openMenus = [];
+    altShortcuts(false);
     document.querySelectorAll(".menubar.active").forEach((bar) => {
         bar.classList.remove("active");
         bar.querySelectorAll(".open").forEach((t) => t.classList.remove("open"));
@@ -29,7 +47,7 @@ function normalize(entry) {
 }
 
 // Abre un menú en (x, y) de la pantalla; 'level' es la profundidad (submenús).
-export function popupMenu(entries, x, y, { level = 0, onClose, minWidth } = {}) {
+export function popupMenu(entries, x, y, { level = 0, onClose, minWidth, above = false } = {}) {
     while (openMenus.length > level)
         openMenus.pop().remove();
     const menu = document.createElement("div");
@@ -45,6 +63,11 @@ export function popupMenu(entries, x, y, { level = 0, onClose, minWidth } = {}) 
         if (entry === "-") {
             if (menu.lastChild && !menu.lastChild.classList.contains("separator"))
                 menu.appendChild(Object.assign(document.createElement("div"), { className: "separator" }));
+            continue;
+        }
+        // Título de sección (como las de ChoiceButton::addSection de Kaint).
+        if (entry.section !== undefined) {
+            menu.appendChild(Object.assign(document.createElement("div"), { className: "section", textContent: plain(entry.section) }));
             continue;
         }
         const item = document.createElement("div");
@@ -103,7 +126,8 @@ export function popupMenu(entries, x, y, { level = 0, onClose, minWidth } = {}) 
     // Dentro de la ventana
     const r = menu.getBoundingClientRect();
     menu.style.left = `${Math.max(0, Math.min(x, window.innerWidth - r.width - 2))}px`;
-    menu.style.top = `${Math.max(0, Math.min(y, window.innerHeight - r.height - 2))}px`;
+    // 'above': el menú sube desde y (botones de la barra de estado).
+    menu.style.top = `${Math.max(0, Math.min(above ? y - r.height : y, window.innerHeight - r.height - 2))}px`;
     menu.items = items;
     menu.onCloseCallback = onClose;
     openMenus.push(menu);

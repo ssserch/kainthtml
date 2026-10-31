@@ -54,7 +54,7 @@ const welcomed = await page.evaluate(() => JSON.parse(localStorage.getItem("kain
 await page.reload();
 await page.waitForFunction(() => window.kaint?.doc);
 const again = await page.evaluate(() => !!document.querySelector(".welcome"));
-check(welcome.logo === "kaint.html" && welcome.selects === 3 && welcome.donate && welcomed === true && !again,
+check(welcome.logo === "kaint.html" && welcome.selects === 4 && welcome.donate && welcomed === true && !again,
       `bienvenida la primera vez (${JSON.stringify(welcome)}, ${welcomed}, ${again})`);
 
 const at = (x, y) => page.evaluate(([x, y]) => {
@@ -397,12 +397,13 @@ const fit = await page.evaluate(() => {
 check(fit, "el zum llena la vista con el rectángulo");
 await page.evaluate(() => window.kaint.view.zoomToWindow());
 
-// Reglas: oscuras como las de paint.js y las ventanas no las tapan
+// Reglas: según el tema (oscuras como las de paint.js con uno oscuro) y las ventanas no las tapan
 await page.evaluate(() => window.kaint.actions.get("rulers").trigger());
 await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
 const rulers = await page.evaluate(() => {
     const ruler = document.querySelector("canvas.ruler.h"), d = ruler.getContext("2d").getImageData(1, 1, 1, 1).data;
-    return { dark: d[0] < 60, panels: [...document.querySelectorAll(".floating-panel")].every((p) => p.offsetLeft >= 20 && p.offsetTop >= 20) };
+    // Según el tema: oscura con un tema oscuro, del color de la barra con uno claro.
+    return { dark: (d[0] < 60) === document.documentElement.classList.contains("dark"), panels: [...document.querySelectorAll(".floating-panel")].every((p) => p.offsetLeft >= 20 && p.offsetTop >= 20) };
 });
 check(rulers.dark && rulers.panels, `reglas (${JSON.stringify(rulers)})`);
 await page.evaluate(() => window.kaint.actions.get("rulers").trigger());
@@ -618,17 +619,17 @@ check(misc.light === 200 && misc.dark === 150 && misc.classic && misc.custom && 
     const corners = await page.evaluate(async () => {
         const { Selection } = await import("./js/core/Selection.js");
         const k = window.kaint, doc = k.doc;
-        doc.setSelection(Selection.rect(doc.width, doc.height, 10, 10, 1, 20));
+        doc.setSelection(Selection.rect(doc.width, doc.height, 10, 10, 40, 20));
         k.tools.select("moveselectedpixels");
         const tool = k.tools.current, view = k.view;
         const ev = (x, y, button = "left") => { const v = view.imageToView(x, y); return { x, y, vx: v.x, vy: v.y, button, shift: false, ctrl: false, alt: false }; };
-        tool.onPointerDown(ev(11, 20));
+        tool.onPointerDown(ev(50, 20));
         tool.drag = { ...tool.drag, kind: "resize", handle: 3 };
-        tool.onPointerMove(ev(14.37, 20));
-        tool.onPointerMove(ev(16.71, 20.4));
+        tool.onPointerMove(ev(53.37, 20));
+        tool.onPointerMove(ev(55.71, 20.4));
         const box = tool.drag.session.box, m = box.matrix(), b = box.base;
         const pts = [m.transformPoint({ x: b.x, y: b.y }), m.transformPoint({ x: b.x + b.w, y: b.y + b.h })];
-        tool.onPointerUp(ev(16.71, 20.4));
+        tool.onPointerUp(ev(55.71, 20.4));
         k.undo();
         k.undo();
         return pts.flatMap((q) => [q.x, q.y]);
@@ -667,7 +668,8 @@ check(misc.light === 200 && misc.dark === 150 && misc.classic && misc.custom && 
         const out = {
             root: document.documentElement.classList.contains("pdn"),
             border: getComputedStyle(panel).borderTopWidth,
-            jumps: [...document.querySelectorAll(".history-jump")].every((b) => getComputedStyle(b).display === "none"),
+            // Ir al principio y al final se ven también con el aspecto de Paint.NET (Configuración).
+            jumps: [...document.querySelectorAll(".history-jump")].every((b) => getComputedStyle(b).display !== "none"),
             select: getComputedStyle(document.querySelector(".colors-panel .top")).display,
             more: document.querySelector(".colors-panel .more-button").textContent,
             beside: !!document.querySelector(".colors-panel .wheel-column .more-button"),

@@ -709,12 +709,18 @@ export async function settingsDialog(app = null, startPage = "interface") {
     let show = null;
     const pages = [
         ["interface", "settings-interface", tr("Interfaz de usuario"), async () => {
-            const scheme = select([[0, tr("Seguir al sistema")], [1, tr("Claro")], [2, tr("Oscuro")], [4, tr("Windows 98")], [5, tr("Personalizado")]],
+            const scheme = select([[0, tr("Seguir al sistema")], [1, tr("Claro")], [2, tr("Oscuro")], [6, tr("Azul")], [4, tr("Windows 98")], [5, tr("Personalizado")]],
                                   Settings.get("colorScheme"));
             scheme.addEventListener("change", () => Settings.set("colorScheme", Number(scheme.value)));
+            const cursors = select([[0, "Kaint"], [1, "Paint.NET"]], Settings.get("cursorStyle"));
+            cursors.title = tr("Los de Paint.NET, en pixel art: la cruz con el dibujo de la herramienta.");
+            cursors.addEventListener("change", () => Settings.set("cursorStyle", Number(cursors.value)));
             const look = select([[0, "Kaint"], [1, "Paint.NET"]], Settings.get("uiStyle"));
             look.title = tr("Como Paint.NET 5: más compacto, con las ventanas sin borde y los botones y menús más juntos.");
-            look.addEventListener("change", () => Settings.set("uiStyle", Number(look.value)));
+            look.addEventListener("change", () => {
+                Settings.set("uiStyle", Number(look.value));
+                paintNetCompat();
+            });
             const customize = button(tr("Personalizar…"), tr("Editar el tema personalizado."), async () => {
                 Settings.set("colorScheme", 5);
                 scheme.value = "5";
@@ -731,6 +737,15 @@ export async function settingsDialog(app = null, startPage = "interface") {
             const pack = select(packs.map((p) => [p.id, p.name]), IconPacks.activeId());
             pack.addEventListener("change", () => IconPacks.activate(pack.value));
             const panelStyle = select([[0, tr("Windows 10")], [1, tr("Compacto")]], Settings.get("panelStyle"));
+            // Con el estilo de Paint.NET las ventanas no tienen borde: estilo y borde se ven desactivados.
+            const paintNetCompat = () => {
+                const off = Settings.get("uiStyle") === 1;
+                for (const field of [panelStyle, border]) {
+                    field.disabled = off;
+                    field.title = off ? tr("No se usa con el estilo de interfaz Paint.NET: sus ventanas no tienen borde.") : "";
+                    field.closest("label")?.classList.toggle("disabled", off);
+                }
+            };
             panelStyle.addEventListener("change", () => Settings.set("panelStyle", Number(panelStyle.value)));
             const border = numberInput(Settings.get("panelBorder"), 1, 12);
             border.style.width = "60px";
@@ -739,6 +754,7 @@ export async function settingsDialog(app = null, startPage = "interface") {
             const autosave = numberInput(Settings.get("autosaveMinutes"), 0, 120);
             autosave.style.width = "60px";
             autosave.addEventListener("input", () => Settings.set("autosaveMinutes", autosave.read()));
+            queueMicrotask(paintNetCompat);
             return [
                 check(tr("Animaciones"), "animations",
                       tr("Menús y ventanas que aparecen con un fundido, capas que se deslizan al reordenarlas y otras transiciones.")),
@@ -756,8 +772,13 @@ export async function settingsDialog(app = null, startPage = "interface") {
                       tr("La selección, el degradado, la línea, el texto y las formas muestran la flecha (o la I) del tema de cursores del escritorio con su icono al lado. Desactivado, la flecha de Kaint.")),
                 check(tr("Al arrastrar una capa, marcar con una línea dónde quedará"), "layerDropLine",
                       tr("Desactivado, la capa se mueve en la lista con el ratón mientras se arrastra.")),
+                check(tr("Mostrar los botones de ir al principio y al final del historial"), "historyJumpButtons",
+                      tr("En la ventana Historial, junto a deshacer y rehacer: vuelven a la imagen original o al último cambio.")),
+                check(tr("Mostrar los colores semitransparentes de la paleta en la vista ampliada de Colores"), "paletteTranslucent",
+                      tr("Las filas de abajo de la paleta de fábrica, como en Paint.NET. El blanco con que se rellenan las paletas de menos colores no se muestra nunca.")),
                 el("label", {}, [tr("Tema:"), scheme, customize]),
                 el("label", {}, [tr("Estilo de la interfaz:"), look]),
+                el("label", {}, [tr("Cursores:"), cursors]),
                 el("label", {}, [tr("Idioma:"), language, reload]),
                 note(tr("Los cambios de idioma se aplican al recargar la página.")),
                 el("label", {}, [tr("Paquete de iconos:"), pack, button(tr("Administrar…"), tr("Añadir o quitar paquetes de iconos."), () => show("iconpacks"))]),
@@ -797,7 +818,7 @@ export async function settingsDialog(app = null, startPage = "interface") {
                 brightness.set(0.75);
                 Settings.set("checkerBrightness", 191);
             });
-            const ruler = select([[0, tr("Oscura")], [1, tr("Del color de la barra de herramientas")]], Settings.get("rulerStyle"));
+            const ruler = select([[0, tr("Según el tema")], [1, tr("Del color de la barra de herramientas")], [2, tr("Oscura")]], Settings.get("rulerStyle"));
             ruler.addEventListener("change", () => Settings.set("rulerStyle", Number(ruler.value)));
             return [check(tr("Proyectar una sombra bajo el lienzo"), "dropShadow"),
                     borderRow(tr("Usar un color personalizado para el fondo del lienzo con los temas claros"), "canvasBorderLight", "#cfcfcf"),
@@ -1330,12 +1351,15 @@ export async function aboutDialog(version) {
 export async function welcomeDialog() {
     const dlg = new Dialog(tr("Te damos la bienvenida a Kaint"));
     const startLanguage = Settings.get("language");
-    const scheme = select([[0, tr("Seguir al sistema")], [1, tr("Claro")], [2, tr("Oscuro")], [4, tr("Windows 98")], [5, tr("Personalizado")]],
+    const scheme = select([[0, tr("Seguir al sistema")], [1, tr("Claro")], [2, tr("Oscuro")], [6, tr("Azul")], [4, tr("Windows 98")], [5, tr("Personalizado")]],
                           Settings.get("colorScheme"));
     scheme.addEventListener("change", () => Settings.set("colorScheme", Number(scheme.value)));
     const look = select([[0, "Kaint"], [1, "Paint.NET"]], Settings.get("uiStyle"));
     look.title = tr("Como Paint.NET 5: más compacto, con las ventanas sin borde y los botones y menús más juntos.");
     look.addEventListener("change", () => Settings.set("uiStyle", Number(look.value)));
+    const cursors = select([[0, "Kaint"], [1, "Paint.NET"]], Settings.get("cursorStyle"));
+    cursors.title = tr("Los de Paint.NET, en pixel art: la cruz con el dibujo de la herramienta.");
+    cursors.addEventListener("change", () => Settings.set("cursorStyle", Number(cursors.value)));
     const language = select([["en", "English"], ["es", "Español"]], startLanguage);
     const note = el("small", { textContent: tr("El idioma se aplica al recargar la página."), style: { opacity: 0.7, display: "none" } });
     language.addEventListener("change", () => {
@@ -1353,6 +1377,7 @@ export async function welcomeDialog() {
         el("div", { className: "form" }, [
             el("span", { textContent: tr("Tema:") }), scheme,
             el("span", { textContent: tr("Estilo de la interfaz:") }), look,
+            el("span", { textContent: tr("Cursores:") }), cursors,
             el("span", { textContent: tr("Idioma:") }), language,
         ]),
         note,

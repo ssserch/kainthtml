@@ -89,6 +89,10 @@ export function applyWindowButtons(root) {
     for (const name of WindowButtons)
         root.classList.toggle(`btn-${name}`, name === style);
     root.classList.toggle("btn-left", !!Settings.get("titleButtonsLeft"));
+    // Windows 7: la X de las ventanas unida al borde de arriba, en un rectángulo o en un cuadrado.
+    const close7 = Number(Settings.get("win7PanelClose") ?? 1);
+    root.classList.toggle("btn-win7-hanging", style === "win7" && close7 === 0);
+    root.classList.toggle("btn-win7-square", style === "win7" && close7 === 2);
 }
 
 // Aplica el tema: clases del documento (oscuro, clásico) y, con Windows 98 y el personalizado, los
@@ -111,9 +115,10 @@ export function applyThemeColors(root, scheme, systemDark) {
             root.style.removeProperty(cssVar);
     }
     // Como el color de énfasis en las barras de título de Windows (y el color propio de Kaint en
-    // Linux): con los temas de Paint.NET, la barra superior y las cabeceras de las ventanas lo llevan.
+    // Linux): con los temas de Paint.NET, la barra superior y las cabeceras de las ventanas lo llevan
+    // (Windows 98, XP y 7 tienen las suyas: con Windows 7, el título salía blanco sobre el cristal).
     const title = Settings.get("titleBarColor");
-    if (title && /^#[0-9a-f]{6}$/i.test(title) && (scheme === 0 || scheme === 1 || scheme === 2 || scheme === 6 || scheme === 7)) {
+    if (title && /^#[0-9a-f]{6}$/i.test(title) && (scheme === 0 || scheme === 1 || scheme === 2 || scheme === 6)) {
         const n = parseInt(title.slice(1), 16), light = Math.max(n >> 16, (n >> 8) & 255, n & 255) + Math.min(n >> 16, (n >> 8) & 255, n & 255);
         for (const cssVar of ["--menubar", "--panel-title", "--panel-title-end", "--win-title"])
             root.style.setProperty(cssVar, title);
@@ -122,6 +127,21 @@ export function applyThemeColors(root, scheme, systemDark) {
     } else {
         root.style.removeProperty("--win-title");
         root.style.removeProperty("--win-title-text");
+    }
+    // Color de selección propio (temas Claro, Oscuro y Seguir al sistema, como en Kaint): el fondo
+    // de lo elegido; el borde, más oscuro (claro) o más claro (oscuro), y lo de bajo el puntero, a
+    // medio camino del fondo de las ventanas.
+    const own = Settings.get(base === "dark" ? "selectionColorDark" : "selectionColorLight");
+    const ownSelection = (scheme === 0 || scheme === 1 || scheme === 2) && /^#[0-9a-f]{6}$/i.test(own || "");
+    root.classList.toggle("own-selection", ownSelection);
+    if (ownSelection) {
+        root.style.setProperty("--selection", own);
+        root.style.setProperty("--selection-border", base === "dark" ? `color-mix(in srgb, ${own} 55%, white)` : `color-mix(in srgb, ${own} 70%, black)`);
+        for (const cssVar of ["--hover", "--button-hover"])
+            root.style.setProperty(cssVar, `color-mix(in srgb, ${own} 45%, var(--panel))`);
+    } else {
+        // (--selection, --selection-border y --hover los vuelve a poner o quitar el bucle de arriba.)
+        root.style.removeProperty("--button-hover");
     }
     // Como en Kaint (Configuración > Lienzo): el fondo alrededor de la imagen puede tener su color.
     const border = Settings.get(base === "dark" ? "canvasBorderDark" : "canvasBorderLight");

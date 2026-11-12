@@ -21,19 +21,21 @@ import { applySetting as applyAnimations } from "./Animations.js";
 import { CanvasView, ZoomPresets } from "./Canvas.js";
 import { applyThemeColors, applyWindowButtons } from "./Themes.js";
 import {
-    aboutDialog, animationDialog, canvasSizeDialog, checkbox, colorProfileDialog, Dialog, dialogOpen, el, layerPropertiesDialog, message, newImageDialog, promptNumber,
+    aboutDialog, animationDialog, canvasSizeDialog, checkbox, colorProfileDialog, Dialog, dialogOpen, el, gifFramesDialog, layerPropertiesDialog, message, newImageDialog, promptNumber,
     resizeDialog, saveAsDialog, settingsDialog, TaskDialog,
 } from "./Dialogs.js";
 import { delayFromName } from "../core/Codecs.js";
 import { computeEffect, effectDialog, effectInput, renderEffect } from "./EffectDialog.js";
-import { icon, iconUrl, refreshIcons, setActiveColors, unsavedStar } from "./Icons.js";
+import { collabMark, computerMark, crownMark, icon, iconUrl, refreshIcons, setActiveColors, unsavedStar } from "./Icons.js";
 import { MenuBar, popupMenu } from "./Menu.js";
 import { colorsPanel, FloatingPanel, historyPanel, layersPanel, toolsPanel } from "./Panels.js";
 import { isPhone, MobilePanels } from "./Mobile.js";
 import { ToolOptions } from "./ToolOptions.js";
 import { saveConfigDialog } from "./SaveDialog.js";
+import { saveAllDialog } from "./SaveAllDialog.js";
 import { formatLength, pixelsPerUnit, unitSuffix } from "./Units.js";
 import { ToolManager } from "../tools/Tool.js";
+import { CollabController } from "../collab/CollabUI.js";
 import { EllipseSelectTool, LassoSelectTool, MagicWandTool, RectSelectTool } from "../tools/SelectionTools.js";
 import { MoveSelectedTool, MoveSelectionTool } from "../tools/MoveTools.js";
 import { ColorPickerTool, PanTool, ZoomTool } from "../tools/ViewTools.js";
@@ -84,6 +86,8 @@ export class App extends EventTarget {
         this.createCornerButtons();
         this.createImageList();
         this.createStatusBar();
+        // Modo colaborativo (Archivo > Colaboración y Configuración > Colaboración).
+        this.collab = new CollabController(this);
         this.toolOptions = new ToolOptions(document.getElementById("tool-options"), this);
         this.tools.addEventListener("changed", () => {
             this.view.tool = this.tools.current;
@@ -127,13 +131,13 @@ export class App extends EventTarget {
             this.refreshHint();
         });
         window.addEventListener("beforeunload", (e) => {
-            if (this.docs.some((d) => d.isModified())) {
+            if (this.collab?.active || this.docs.some((d) => d.isModified() && !this.collab?.isGuestDocument(d))) {
                 e.preventDefault();
                 e.returnValue = "";
             }
         });
         this.applySettings();
-        this.tools.select(Settings.get("startTool") || Settings.get("lastTool") || "paintbrush");
+        this.tools.select(Settings.get("startupTool") || Settings.get("lastTool") || "paintbrush");
         if (!this.tools.current)
             this.tools.select("paintbrush");
         AppState.currentTool = this.tools.current.id;
@@ -154,6 +158,7 @@ export class App extends EventTarget {
         const root = document.documentElement;
         const key = JSON.stringify([Settings.get("colorScheme"), Settings.get("customTheme"), Settings.get("canvasBorderLight"),
                                     Settings.get("canvasBorderDark"), Settings.get("titleBarColor"),
+                                    Settings.get("selectionColorLight"), Settings.get("selectionColorDark"),
                                     matchMedia("(prefers-color-scheme: dark)").matches]);
         if (this.themeKey !== key) {
             this.themeKey = key;
@@ -259,7 +264,11 @@ export class App extends EventTarget {
         if (!doc)
             return true;
         this.tools.finishCurrent();
-        if (ask && doc.isModified()) {
+        // La imagen de una sesión colaborativa: cerrarla es salir de ella (el invitado no la guarda).
+        const guest = this.collab?.isGuestDocument(doc);
+        if (guest && !(await this.collab.leave(ask)))
+            return false;
+        if (ask && !guest && doc.isModified()) {
             const dlg = new TaskDialog(tr("Cambios no guardados"), "dialog-warning",
                                        tr("«%1» tiene cambios sin guardar.\n¿Qué quiere hacer?", doc.displayName()),
                                        thumbnail(doc.flattened(), 96, 96));
@@ -274,6 +283,8 @@ export class App extends EventTarget {
                 return false;
             }
         }
+        if (!guest && this.collab?.isSessionDocument(doc) && !(await this.collab.leave(ask)))
+            return false;
         const i = this.docs.indexOf(doc);
         this.docs.splice(i, 1);
         if (doc === this.doc) {
@@ -405,6 +416,74 @@ export class App extends EventTarget {
                 return;
     }
 
+    // "Guardar todos": nombre, formato y orden de todas las imágenes abiertas en un diálogo. Con el
+    // acceso a archivos del navegador se elige la carpeta; si no, se descargan.
+    async saveAllAs() {
+        if (!this.docs.length)
+            return;
+        this.tools.finishCurrent();
+        const formats = [...new Set(this.saveFormats().map((f) => f.ext))];
+        const entries = this.docs.map((d) => {
+            const format = d.fileName ? this.formatOf(d.fileName) : null;
+            return {
+                name: d.fileName ? baseName(d.fileName) : d.displayName(),
+                ext: format ? format.ext : d.layers.length > 1 ? "ora" : "png",
+                image: thumbnail(d.flattened(), 56, 56),
+                saved: !!d.fileName && !d.isModified(),
+            };
+        });
+        const chosen = await saveAllDialog(entries, formats);
+        if (!chosen)
+            return;
+        let dir = null;
+        if (window.showDirectoryPicker) {
+            try {
+                dir = await window.showDirectoryPicker({ id: "kaint-save-all", mode: "readwrite" });
+            } catch (e) {
+                if (e.name === "AbortError")
+                    return;
+            }
+        }
+        const docs = [...this.docs], errors = [];
+        document.body.classList.add("busy");
+        try {
+            for (const { index, name } of chosen) {
+                const doc = docs[index];
+                if (!doc || !this.docs.includes(doc))
+                    continue;
+                const format = this.formatOf(name);
+                const options = this.saveOptions?.[format.ext] ? structuredClone(this.saveOptions[format.ext]) : defaultSaveOptions();
+                if (format.animation && !this.saveOptions?.[format.ext])
+                    options.loops = doc.gifLoops ?? 0;
+                try {
+                    // Los formatos sin capas guardan la imagen acoplada (sin tocar sus capas).
+                    const blob = await encode(doc, format, options);
+                    let handle = null;
+                    if (dir) {
+                        handle = await dir.getFileHandle(name, { create: true });
+                        const writable = await handle.createWritable();
+                        await writable.write(blob);
+                        await writable.close();
+                    } else {
+                        download(blob, name);
+                    }
+                    doc.fileHandle = handle;
+                    doc.fileName = name;
+                    doc.markSaved();
+                } catch (e) {
+                    errors.push(tr("«%1»: %2", name, String(e?.message || e)));
+                }
+            }
+        } finally {
+            document.body.classList.remove("busy");
+        }
+        this.rebuildTabs();
+        this.rememberSession();
+        updateActions();
+        if (errors.length)
+            await message(tr("No se pudo guardar"), tr("No se pudieron guardar:\n\n%1", errors.join("\n")), "dialog-warning");
+    }
+
     async closeAll() {
         for (const doc of [...this.docs])
             if (!(await this.closeDocument(doc)))
@@ -472,7 +551,7 @@ export class App extends EventTarget {
             popup = el("div", { className: "image-list-popup" });
             for (const doc of this.docs) {
                 // Como en la tira: el sol de los cambios sin guardar arriba a la izquierda de la miniatura.
-                const thumb = el("span", { className: "thumb" }, [thumbnail(doc.flattened(), 64, 48)]);
+                const thumb = el("span", { className: "thumb" }, [thumbnail(doc.flattened(), 64, 48, true, true)]);
                 if (doc.isModified())
                     thumb.appendChild(el("span", { className: "unsaved", title: tr("Cambios no guardados") }, [unsavedStar(12)]));
                 const row = el("div", { className: "row" + (doc === this.doc ? " selected" : "") },
@@ -532,9 +611,26 @@ export class App extends EventTarget {
         const paint = () => {
             tab.querySelector(":scope > canvas")?.remove();
             tab.querySelector(".unsaved")?.remove();
-            tab.insertBefore(thumbnail(doc.flattened(), 64, 48), tab.firstChild);
-            if (doc.isModified())
+            tab.querySelector(".collab-marks")?.remove();
+            tab.insertBefore(thumbnail(doc.flattened(), 64, 48, true, true), tab.firstChild);
+            // Sesión colaborativa: pestaña amarilla, las personas en lugar de la estrella, la corona
+            // (la imagen del anfitrión guardada o no) y, en los invitados, el equipo (su copia propia).
+            const collab = this.collab?.tabState(doc) || { collab: false };
+            tab.classList.toggle("collab", collab.collab);
+            if (collab.collab) {
+                const marks = [el("span", { title: tr("Imagen de la sesión colaborativa") }, [collabMark(12)]),
+                               el("span", { title: collab.hostSaved ? tr("El anfitrión guardó la imagen.") : tr("El anfitrión tiene cambios sin guardar.") },
+                                  [crownMark(collab.hostSaved ? 2 : 1, 12)])];
+                if (collab.guest) {
+                    const state = collab.copy === "current" ? 2 : collab.copy === "behind" ? 1 : 0;
+                    const tips = [tr("Todavía no exportaste una copia a tu equipo."), tr("Tu copia exportada no está al día con la imagen del anfitrión."),
+                                  tr("Tu copia exportada está al día con la imagen del anfitrión.")];
+                    marks.push(el("span", { title: tips[state] }, [computerMark(state, 12)]));
+                }
+                tab.appendChild(el("div", { className: "collab-marks" }, marks));
+            } else if (doc.isModified()) {
                 tab.appendChild(el("div", { className: "unsaved", title: tr("Cambios no guardados") }, [unsavedStar(12)]));
+            }
             tab.title = doc.displayName();
             if (doc === this.doc)
                 document.title = `${doc.isModified() ? "*" : ""}${doc.displayName()} - Kaint`;
@@ -624,8 +720,25 @@ export class App extends EventTarget {
         A("save", tr("&Guardar"), "document-save", "Ctrl+S", c(() => this.save(this.doc)), has);
         A("saveAs", tr("Guardar &como..."), "document-save-as", "Ctrl+Shift+S", c(() => this.save(this.doc, true)), has);
         A("saveAll", tr("Guardar &todo"), "document-save-all", "Ctrl+Alt+S", c(() => this.saveAll()), has);
+        A("saveAllAs", tr("Guardar to&dos..."), "document-save-all", null, c(() => this.saveAllAs()), has);
         A("print", tr("&Imprimir..."), "document-print", "Ctrl+P", c(() => this.print()), has);
         A("close", tr("&Cerrar"), "document-close", "Ctrl+W", () => this.closeDocument(this.doc), has);
+        const collabActive = () => !!this.collab?.active;
+        // Colaboración: por P2P (la predeterminada) o en la red local, cada una con su configuración.
+        const collabSettingsAt = (section) => {
+            this.collab.revealSection = section;
+            settingsDialog(this, "collab");
+        };
+        A("collabHost", tr("&Hospedar la imagen actual"), "collab", null, c(() => this.collab.hostCurrent("p2p")), () => has() && !collabActive());
+        A("collabJoin", tr("&Unirse con un código..."), "collab", null, () => this.collab.joinDialog("p2p"), () => !collabActive());
+        A("collabSettingsP2P", tr("&Configuración P2P..."), "configure", null, () => collabSettingsAt("p2p"));
+        A("collabHostLan", tr("&Hospedar la imagen actual..."), "collab", null, c(() => this.collab.hostCurrent("lan")), () => has() && !collabActive());
+        A("collabJoinLan", tr("&Unirse a una sesión..."), "collab", null, () => this.collab.joinDialog("lan"), () => !collabActive());
+        A("collabSettingsLan", tr("C&onfiguración LAN..."), "configure", null, () => collabSettingsAt("lan"));
+        A("collabWindow", tr("&Ventana de la sesión..."), "collab", null, () => this.collab.sessionDialog(), collabActive);
+        A("collabHistory", tr("&Historial de la sesión..."), "collab", null, () => this.collab.historyDialog(), collabActive);
+        A("collabLeave", tr("&Salir de la sesión"), "application-exit", null, () => this.collab.leave(true), collabActive);
+        A("collabSettings", tr("&Configuración de colaboración..."), "configure", null, () => settingsDialog(this, "collab"));
         A("closeAll", tr("Cerrar t&odas"), "document-close", "Ctrl+Shift+W", () => this.closeAll(), has);
         // Edición
         A("undo", tr("&Deshacer"), "edit-undo", "Ctrl+Z", () => this.undo(), () => this.doc?.history.canUndo() || this.tools.current?.isBusy());
@@ -791,7 +904,11 @@ export class App extends EventTarget {
     // El menú Archivo (también el del botón de guardar con flecha del teléfono).
     fileEntries() {
         const a = (id) => this.actions.get(id);
-        return [a("new"), a("open"), "-", a("save"), a("saveAs"), a("saveAll"), "-", a("print"), "-", a("close"), a("closeAll")];
+        const collab = { text: tr("C&olaboración"), icon: "collab",
+                         submenu: () => [{ text: tr("&P2P (por Internet)"), icon: "collab", submenu: () => [a("collabHost"), a("collabJoin"), "-", a("collabSettingsP2P")] },
+                                         { text: tr("&Red local (LAN)"), icon: "collab", submenu: () => [a("collabHostLan"), a("collabJoinLan"), "-", a("collabSettingsLan")] },
+                                         "-", a("collabWindow"), a("collabHistory"), a("collabLeave"), "-", a("collabSettings")] };
+        return [a("new"), a("open"), "-", a("save"), a("saveAs"), a("saveAll"), a("saveAllAs"), "-", a("print"), "-", collab, "-", a("close"), a("closeAll")];
     }
 
     createToolBar() {
@@ -817,6 +934,20 @@ export class App extends EventTarget {
                 const b = toolButton(this.actions.get(id), barIcons[id] || this.actions.get(id).icon, 16);
                 b.dataset.action = id;
                 bar.appendChild(b);
+                // Guardar lleva una flecha con las opciones de guardado (Guardar como, Guardar todos...).
+                if (id === "save") {
+                    const arrow = el("button", { className: "tbutton menu-arrow desktop-only", type: "button", title: tr("Opciones de guardado") },
+                                     [el("span", { className: "arrow", textContent: "▾" })]);
+                    arrow.addEventListener("click", () => {
+                        const r = b.getBoundingClientRect();
+                        popupMenu([this.actions.get("save"), this.actions.get("saveAs"), "-", this.actions.get("saveAll"), this.actions.get("saveAllAs")],
+                                  r.left, r.bottom + 1);
+                    });
+                    const sync = () => (arrow.disabled = !this.actions.get("save").isEnabled());
+                    window.addEventListener("kaint-update", sync);
+                    sync();
+                    bar.appendChild(arrow);
+                }
                 // En el teléfono, junto a Anular la selección, la papelera: borra la selección como
                 // Supr, que el teléfono no tiene (ocupa el sitio de Reglas, que ahí no se ve).
                 if (id === "deselect") {
@@ -1136,7 +1267,8 @@ export class App extends EventTarget {
     // se activa esa herramienta para seguir editándolo.
     syncToolWithHistory() {
         const doc = this.doc;
-        if (this.syncingHistory || !doc)
+        // Lo que llega de la sesión colaborativa no cambia de herramienta ni retoma pasos.
+        if (this.syncingHistory || !doc || this.collab?.applyingRemote)
             return;
         this.syncingHistory = true;
         try {
@@ -1198,14 +1330,24 @@ export class App extends EventTarget {
         }
         let doc;
         try {
-            const type = Plugins.fileTypeFor(file.name);
+            // Photoshop lo abre Kaint (con sus capas) aunque haya un complemento que también lo haga.
+            const type = /\.ps[db]$/i.test(file.name) ? null : Plugins.fileTypeFor(file.name);
             doc = type ? await this.decodeWithPlugin(type, file) : await openFile(file);
-        } catch {
-            await message(tr("Abrir"), tr("No se pudo abrir «%1».", file.name));
+        } catch (e) {
+            // Los errores propios (Photoshop en CMYK, HEIC en un navegador que no lo abre...) explican qué pasó.
+            const why = e instanceof Error && e.name === "Error" && e.message ? `\n${e.message}` : "";
+            await message(tr("Abrir"), tr("No se pudo abrir «%1».", file.name) + why);
             return;
         }
-        // GIF animado: como capas (un fotograma por capa, como hasta ahora) o cada fotograma como
-        // una imagen aparte.
+        // Convertido al abrirlo (un PSD con grupos, de 16 bits...): una imagen nueva, con el aviso.
+        if (doc.importWarning) {
+            doc.markSaved();
+            this.addDocument(doc);
+            await message(tr("Abrir «%1»", file.name), doc.importWarning);
+            return;
+        }
+        // GIF animado: como capas (un fotograma por capa, como hasta ahora), cada fotograma como
+        // una imagen aparte, solo el primero como una imagen normal o los fotogramas que se elijan.
         if (/\.gif$/i.test(file.name) && doc.layers.length > 1) {
             let mode = Settings.get("gifOpenMode") || 0;
             if (mode === 0) {
@@ -1217,21 +1359,41 @@ export class App extends EventTarget {
                                              tr("Una sola imagen con un fotograma en cada capa, una encima de otra. Se vuelve a guardar como GIF animado."), true);
                 const images = ask.addChoice("image-list-menu", tr("Como imágenes"),
                                              tr("Cada fotograma se abre como una imagen aparte. Al guardar como GIF se pueden elegir las imágenes que forman la animación."));
+                const single = ask.addChoice("document-new", tr("Como una sola imagen"),
+                                             tr("Solo el primer fotograma, como una imagen normal (sin animación)."));
+                const pick = ask.addChoice("edit-select-all", tr("Elegir los fotogramas…"),
+                                           tr("Elige qué fotogramas abrir y si se abren como capas o como imágenes."));
                 const choice = await ask.exec();
-                if (choice !== layers && choice !== images)
+                mode = { [layers]: 1, [images]: 2, [single]: 3, [pick]: 4 }[choice] || 0;
+                if (!mode)
                     return;
-                mode = choice === images ? 2 : 1;
                 if (remember.input.checked)
                     Settings.set("gifOpenMode", mode);
             }
-            if (mode === 2) {
+            // Fotogramas elegidos (todos si no se elige).
+            let frames = doc.layers.map((_, i) => i);
+            let asImages = mode === 2;
+            if (mode === 3) {
+                frames = [0];
+            } else if (mode === 4) {
+                const picked = await gifFramesDialog(doc, file.name);
+                if (!picked)
+                    return;
+                frames = picked.frames;
+                asImages = picked.asImages;
+            }
+            // Uno solo (el primero o el único elegido): una imagen normal.
+            if (frames.length === 1)
+                asImages = true;
+            if (asImages) {
                 // Cada fotograma, una imagen sin archivo ("animación (3)"); el nombre de su capa
                 // conserva la duración, para volver a guardarlas como GIF eligiendo las imágenes.
                 const base = baseName(file.name);
                 let first = null;
-                doc.layers.forEach((layer, i) => {
-                    const d = new Document(doc.width, doc.height, { name: tr("%1 (%2)", base, i + 1), background: null, historyName: tr("Abrir imagen"),
-                                                                    historyIcon: "document-open", dpi: doc.dpi });
+                frames.forEach((i) => {
+                    const layer = doc.layers[i];
+                    const d = new Document(doc.width, doc.height, { name: frames.length === 1 ? base : tr("%1 (%2)", base, i + 1), background: null,
+                                                                    historyName: tr("Abrir imagen"), historyIcon: "document-open", dpi: doc.dpi });
                     d.layers[0].name = layer.name;
                     d.layers[0].ctx.drawImage(layer.canvas, 0, 0);
                     d.gifLoops = doc.gifLoops;
@@ -1241,6 +1403,17 @@ export class App extends EventTarget {
                 });
                 if (first)
                     this.setCurrent(first);
+                return;
+            }
+            if (frames.length < doc.layers.length) {
+                // Solo los fotogramas elegidos, como capas, y sin archivo: guardar no pisa el GIF con
+                // menos fotogramas.
+                doc.layers = frames.map((i) => doc.layers[i]);
+                doc.active = doc.layers.length - 1;
+                doc.name = baseName(file.name);
+                doc.fileName = "";
+                doc.markSaved();
+                this.addDocument(doc);
                 return;
             }
         }
@@ -1445,6 +1618,12 @@ export class App extends EventTarget {
             return false;
         } finally {
             document.body.classList.remove("busy");
+        }
+        // Invitado de una sesión colaborativa: solo una copia (la imagen la guarda el anfitrión).
+        if (this.collab?.isGuestDocument(doc)) {
+            this.showMessage(tr("Copia exportada como «%1». La imagen de la sesión la guarda el anfitrión.", name));
+            this.collab.markExported(doc);
+            return true;
         }
         doc.fileHandle = handle;
         doc.fileName = name;
@@ -1974,8 +2153,13 @@ export class App extends EventTarget {
 
     async importLayer() {
         const [file] = await this.pickFiles(false);
-        if (!file)
-            return;
+        if (file)
+            await this.importLayerFile(file);
+    }
+
+    // La imagen de un archivo como capa nueva sobre la activa (Importar desde archivo, soltar como
+    // capa); los de varias capas, acoplados.
+    async importLayerFile(file) {
         try {
             const imported = await openFile(file);
             this.paste(imported.flattened(), "newLayer");
@@ -2077,7 +2261,33 @@ export class App extends EventTarget {
             e.preventDefault();
             depth = 0;
             app.classList.remove("dragging-file");
-            for (const file of e.dataTransfer.files)
+            const files = [...e.dataTransfer.files];
+            // Los complementos se instalan; las imágenes, con una abierta, como en Paint.NET: ¿se
+            // abren o se agregan como capas?
+            const plugins = files.filter((f) => /\.paintjs$/i.test(f.name) || isCraftFile(f.name));
+            const images = files.filter((f) => !plugins.includes(f));
+            for (const file of plugins)
+                await this.openFile(file);
+            if (images.length && this.doc) {
+                const several = images.length > 1;
+                const ask = new TaskDialog(tr("Arrastrar y soltar"), null,
+                                           several ? tr("¿Qué quiere hacer con los archivos?") : tr("¿Qué quiere hacer con el archivo?"));
+                const open = ask.addChoice("document-open", several ? tr("Abrir los archivos") : tr("Abrir el archivo"),
+                                           several ? tr("Abre las imágenes.") : tr("Abre la imagen."), true);
+                const layer = ask.addChoice("layer-import", several ? tr("Agregar capas") : tr("Agregar capa"),
+                                            several ? tr("Carga las imágenes y las agrega como capas nuevas en la imagen actual.")
+                                                    : tr("Carga la imagen y la agrega como una nueva capa en la imagen actual."));
+                ask.addChoice("dialog-cancel", tr("Cancelar"), "");
+                const choice = await ask.exec();
+                if (choice === layer) {
+                    for (const file of images)
+                        await this.importLayerFile(file);
+                    return;
+                }
+                if (choice !== open)
+                    return;
+            }
+            for (const file of images)
                 await this.openFile(file);
         });
     }

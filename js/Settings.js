@@ -3,6 +3,24 @@ const KEY = "kaint.settings";
 
 const defaults = {
     animations: true,
+    // Modo colaborativo (Configuración > Colaboración; js/collab/CollabUI.js).
+    collabName: "",
+    collabColor: "",
+    collabSessionName: "",
+    collabAccess: "approve",
+    collabPassword: "",
+    collabAllowedIds: [],
+    collabRealtime: true,
+    collabAutoAccept: false,
+    collabAnnounce: true,
+    collabShowCursors: true,
+    collabServer: "",
+    // P2P (la predeterminada) o la red local; servidores de señalización y STUN/TURN (vacío: los
+    // predeterminados); la vista compacta de su página de Configuración.
+    collabMode: "p2p",
+    collabSignalServers: null,
+    collabIceServers: null,
+    collabCompactView: false,
     translucentPanels: true,
     // Como Paint.NET: las ventanas translúcidas solo lo son mientras tapan la imagen (al cruzar su
     // borde o encima de ella); fuera de la imagen, opacas.
@@ -54,6 +72,9 @@ const defaults = {
     uiFontFamily: "",
     uiFontSize: 0,
     titleBarColor: null,
+    // Color de selección propio de los temas Claro y Oscuro (null: el azul de siempre).
+    selectionColorLight: null,
+    selectionColorDark: null,
     // Ver > Reglas y su estilo: 0, oscura como la de paint.js; 1, del color de la barra.
     rulers: false,
     rulerStyle: 0,
@@ -67,8 +88,9 @@ const defaults = {
     unit: 0,
     // Atajos cambiados en Configuración > Atajos de teclado (id de la acción → combinación).
     shortcuts: {},
-    // Herramienta al abrir Kaint ("" = la última que se usó).
-    startTool: "",
+    // Herramienta al abrir Kaint ("": la última que se usó); por defecto, el pincel. Con otro nombre
+    // desde la 1.1.7 (antes la predeterminada era la última usada).
+    startupTool: "paintbrush",
     lastTool: "paintbrush",
     // Lápiz y tableta: la presión cambia el tamaño; el extremo borrador activa la Goma.
     penPressure: true,
@@ -84,6 +106,9 @@ const defaults = {
     // 1 Windows 11, 2 macOS, 3 Windows 7, 4 Windows XP, 5 Windows 98; y a la izquierda.
     titleButtons: 0,
     titleButtonsLeft: false,
+    // La X de las ventanas con los botones de Windows 7: 0 unida al borde de arriba, 1 rectángulo,
+    // 2 cuadrado.
+    win7PanelClose: 1,
     // Teléfono: las ventanas escondidas en las esquinas ("autohide") o flotantes ("windows"), si al
     // sacar una se esconden las que tape (en las esquinas) y el tamaño de cada una en el modo
     // Ventanas (en %).

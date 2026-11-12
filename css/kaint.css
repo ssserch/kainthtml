@@ -433,6 +433,30 @@ u {
     line-height: 0;
 }
 
+/* Imagen de la sesión colaborativa: amarilla, con las personas, la corona y el equipo. */
+.image-tab.collab,
+:root.pdn .image-tab.collab {
+    background: rgba(255, 206, 40, 0.42);
+    border: 2px solid #e2a800;
+}
+
+.image-tab.collab.current,
+:root.pdn .image-tab.collab.current,
+:root.pdn:not(.dark) .image-tab.collab.current {
+    background: rgba(255, 206, 40, 0.62);
+    border-color: #e2a800;
+}
+
+.image-tab .collab-marks {
+    position: absolute;
+    top: 3px;
+    left: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    line-height: 0;
+}
+
 .corner-buttons {
     display: flex;
     align-items: center;
@@ -1631,6 +1655,17 @@ input[type="checkbox"] {
     background: transparent;
 }
 
+/* Ventana que no bloquea (la de la sesión): lo de detrás se sigue usando; solo la ventana recibe los
+   clics. Los diálogos que se abren después van encima (el mismo z-index, más tarde en la página). */
+.backdrop.modeless {
+    background: transparent;
+    pointer-events: none;
+}
+
+.backdrop.modeless > .dialog {
+    pointer-events: auto;
+}
+
 body.busy, body.busy * {
     cursor: progress !important;
 }
@@ -1780,9 +1815,42 @@ body.busy, body.busy * {
     --track-fill: #9a9a9a;
 }
 
-.fx-gradient {
-    height: 5px;
-    margin: 0 6px 2px;
+/* Deslizadores con degradado (Matiz, Saturación, Claridad, Temperatura...): el riel lleva los
+   colores, desde donde queda el centro del tirador en el mínimo hasta donde queda en el máximo. */
+.fx-slider input[type="range"].gradient {
+    appearance: none;
+    -webkit-appearance: none;
+    height: 22px;
+    background: transparent;
+}
+.fx-slider input[type="range"].gradient::-webkit-slider-runnable-track {
+    height: 19px;
+    background: var(--fx-gradient) center / calc(100% - 11px) 6px no-repeat,
+                linear-gradient(var(--border), var(--border)) center / calc(100% - 9px) 8px no-repeat !important;
+}
+.fx-slider input[type="range"].gradient::-moz-range-track {
+    height: 19px;
+    background: var(--fx-gradient) center / calc(100% - 11px) 6px no-repeat,
+                linear-gradient(var(--border), var(--border)) center / calc(100% - 9px) 8px no-repeat !important;
+}
+.fx-slider input[type="range"].gradient::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 11px;
+    height: 19px;
+    border: none;
+    background: var(--thumb, var(--accent));
+    clip-path: polygon(0 0, 100% 0, 100% 14px, 50% 100%, 0 14px);
+}
+.fx-slider input[type="range"].gradient::-moz-range-thumb {
+    width: 11px;
+    height: 19px;
+    border: none;
+    border-radius: 0;
+    background: var(--thumb, var(--accent));
+    clip-path: polygon(0 0, 100% 0, 100% 14px, 50% 100%, 0 14px);
+}
+.fx-slider input[type="range"].gradient:disabled {
+    opacity: 0.45;
 }
 
 .fx-row input[type="number"] {
@@ -2892,10 +2960,16 @@ fieldset.group > legend {
     border: none;
 }
 
+/* Los botones de las barras miden lo mismo que en Kaint: 24 px de un icono al siguiente, y los
+   separadores con 2 px a cada lado (QToolBar::separator de Kaint con el aspecto de Paint.NET). */
 :root.pdn .toolbar .tbutton {
-    min-width: 22px;
-    min-height: 22px;
-    padding: 1px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px;
+}
+
+:root.pdn .toolbar .sep {
+    margin: 3px 2px;
 }
 
 :root.pdn .tool-options {
@@ -2910,6 +2984,18 @@ fieldset.group > legend {
 :root.pdn:not(.dark) .image-tab.current {
     background: #cce8ff;
     border-color: #99d1ff;
+}
+
+/* Con el color de selección propio, la pestaña de la imagen y los botones de las ventanas lo llevan. */
+:root.pdn.own-selection .image-tab.current,
+:root.pdn.own-selection:not(.dark) .image-tab.current {
+    background: var(--selection);
+    border-color: var(--selection-border);
+}
+
+:root.own-selection:not(.classic) .corner-buttons .tbutton.checked {
+    background: color-mix(in srgb, var(--selection-border) 25%, transparent);
+    border-color: var(--selection-border);
 }
 
 /* La X de cerrar solo en la imagen que tiene el puntero. */
@@ -3751,4 +3837,676 @@ fieldset.group > legend {
 
 :root.phone .settings .page select {
     max-width: 100%;
+}
+
+/* Guardar todos (SaveAllDialog): una fila por imagen con los puntos para moverla (solo bajo el
+   puntero), si se guarda, la miniatura, el nombre con la extensión en su color y el formato. */
+.dialog.save-all .body {
+    width: min(720px, 92vw);
+}
+.save-all .intro {
+    margin: 0 0 8px;
+    max-width: 680px;
+}
+.save-all-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 6px 3px 2px;
+    border-radius: 4px;
+}
+.save-all-list .save-all-row:hover, .save-all-row.dragging {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.save-all-row.dragging {
+    background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.save-all-row .dots {
+    width: 12px;
+    align-self: stretch;
+    flex: none;
+    cursor: grab;
+    touch-action: none;
+}
+.save-all-list .save-all-row:hover .dots, .save-all-row.dragging .dots {
+    background: radial-gradient(circle, var(--text) 1.5px, transparent 1.7px) 1px center / 5px 5px repeat-y,
+                radial-gradient(circle, var(--text) 1.5px, transparent 1.7px) 6px center / 5px 5px repeat-y;
+    background-size: 5px 5px;
+    background-clip: content-box;
+    padding: 18px 0;
+}
+.save-all-row.dragging .dots {
+    cursor: grabbing;
+}
+.save-all-row .thumb {
+    width: 60px;
+    height: 60px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 12px 12px;
+}
+.save-all-row.head .thumb {
+    height: auto;
+    border: none;
+    background: none;
+}
+.save-all-row .thumb canvas, .save-all-row .thumb img {
+    max-width: 56px;
+    max-height: 56px;
+}
+.save-all-row select {
+    min-width: 84px;
+}
+.save-all-name {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+.save-all-name input {
+    width: 100%;
+    box-sizing: border-box;
+}
+.save-all-name .overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    padding: 0 0 0 5px;
+    overflow: hidden;
+    white-space: pre;
+    font: inherit;
+}
+/* El texto se ve en la capa de encima (con el número en amarillo); el del campo, transparente. */
+.save-all-name input {
+    -webkit-text-fill-color: transparent;
+    caret-color: var(--text);
+}
+
+.save-all-name input::placeholder {
+    color: var(--disabled-text, #888);
+}
+
+.save-all-name .sizer {
+    color: var(--text);
+}
+
+.save-all-name .sizer .number {
+    color: #b88a00;
+}
+
+:root.dark .save-all-name .sizer .number {
+    color: #ffd54a;
+}
+.save-all-numbers {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 6px 0;
+}
+.save-all-numbers input[type="number"] {
+    width: 64px;
+}
+.save-all-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    padding: 2px;
+}
+.save-all .buttons .count {
+    margin-right: auto;
+    align-self: center;
+}
+/* La flecha de Guardar con sus opciones (Guardar como, Guardar todos...): estrecha y pegada a su
+   botón, como en Kaint (con el aspecto de Paint.NET, la medida de los demás botones de la barra no
+   vale para ella: la ensanchaba y separaba los iconos). */
+.tbutton.menu-arrow,
+:root.pdn .toolbar .tbutton.menu-arrow {
+    min-width: 0;
+    width: auto;
+    padding-left: 1px;
+    padding-right: 1px;
+    margin-left: -2px;
+}
+
+:root.pdn .toolbar .tbutton.menu-arrow {
+    margin-left: 0;
+}
+
+/* Su flecha es la de Kaint (la de los botones con menú de Qt): una uve fina de 8 px, del color del
+   texto un poco apagado, no el triángulo relleno de los demás menús. */
+.tbutton.menu-arrow .arrow {
+    display: block;
+    width: 8px;
+    height: 8px;
+    font-size: 0;
+    opacity: 1;
+    background: color-mix(in srgb, var(--text) 75%, var(--window));
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 5.5l4.5 4.5 4.5-4.5' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 8px 8px no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 5.5l4.5 4.5 4.5-4.5' fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 8px 8px no-repeat;
+}
+
+.tbutton.menu-arrow:disabled .arrow {
+    background: var(--disabled);
+}
+
+/* La flecha de los tipos de zalgo, pegada a su botón. */
+.tbutton.zalgo-type,
+:root.pdn .toolbar .tbutton.zalgo-type {
+    min-width: 0;
+    padding-left: 1px;
+    padding-right: 1px;
+    margin-left: -2px;
+}
+
+/* --- Modo colaborativo (js/collab/CollabUI.js) --------------------------------------------------- */
+
+#status-bar .collab-bar {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+#status-bar .collab-bar[hidden] {
+    display: none;
+}
+
+#status-bar .collab-bar .tbutton {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+    padding: 0 6px;
+}
+
+#status-bar .collab-bar .tbutton[hidden] {
+    display: none;
+}
+
+.collab-form {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 520px;
+}
+
+.collab-form label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.collab-note {
+    opacity: 0.75;
+}
+
+.collab-status-text.error {
+    color: #c62828;
+}
+
+.collab-code {
+    font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+    letter-spacing: 0.04em;
+}
+
+.collab-session {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(560px, 86vw);
+}
+
+.collab-session .collab-title {
+    font-weight: 600;
+    margin: 0;
+}
+
+.collab-session .list,
+.settings .collab-ids {
+    max-height: 220px;
+    overflow: auto;
+}
+
+.collab-session .list .row,
+.settings .collab-ids .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.collab-session .list .row > span:not(.collab-swatch):not(.collab-thumb) {
+    flex: 1;
+}
+
+/* Filas de botones de los diálogos de fotogramas, del editor de paquetes y del historial de la sesión. */
+.gif-frames-dialog .row-buttons,
+.icon-pack-editor .row-buttons,
+.collab-history .row-buttons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+/* Abrir un GIF animado > Elegir los fotogramas. */
+.gif-frames {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+    gap: 6px;
+    width: min(680px, 86vw);
+    max-height: min(420px, 55vh);
+    overflow: auto;
+    padding: 2px;
+}
+
+.gif-frame {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-height: 128px;
+    padding: 6px 4px 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    opacity: 0.55;
+}
+
+.gif-frame.checked {
+    opacity: 1;
+    background: var(--selection);
+    border-color: var(--selection-border);
+}
+
+/* La casilla de cada fotograma. */
+.gif-frame::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--border, #888);
+    border-radius: 2px;
+    background: var(--base, #fff);
+}
+
+.gif-frame.checked::before {
+    content: "✓";
+    font-size: 12px;
+    line-height: 14px;
+    text-align: center;
+    color: #fff;
+    background: var(--accent, #0078d7);
+    border-color: var(--accent, #0078d7);
+}
+
+/* Editor de paquetes de iconos. */
+.icon-pack-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(720px, 90vw);
+}
+
+.icon-pack-editor .form-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 8px;
+    align-items: center;
+}
+
+.icon-pack-editor input[type="search"] {
+    flex: 1;
+}
+
+.icon-pack-editor .count {
+    white-space: nowrap;
+}
+
+.icon-pack-editor .icon-pack-slots {
+    height: min(320px, 40vh);
+    overflow: auto;
+}
+
+.icon-pack-editor .icon-pack-slots .row {
+    display: grid;
+    grid-template-columns: 24px 24px minmax(0, auto) 1fr;
+    gap: 8px;
+    align-items: center;
+    cursor: default;
+}
+
+.icon-pack-editor .icon-pack-slots .row .none {
+    text-align: center;
+    opacity: 0.6;
+}
+
+.icon-pack-editor .icon-pack-slots .row.changed .file {
+    font-weight: 600;
+}
+
+.icon-pack-editor .icon-pack-slots .row small {
+    opacity: 0.75;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.icon-pack-editor .icon-pack-slots .row.selected {
+    background: var(--selection);
+    outline: 1px solid var(--selection-border);
+}
+
+.icon-pack-editor .pack-status {
+    white-space: pre-wrap;
+    margin: 0;
+}
+
+.icon-pack-editor-button .kicon {
+    vertical-align: middle;
+}
+
+/* Historial de la sesión. */
+.collab-history {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(420px, 86vw);
+}
+
+.collab-history p {
+    margin: 0;
+}
+
+.collab-history .collab-history-steps {
+    height: 240px;
+    overflow: auto;
+}
+
+.collab-history .collab-history-steps .row {
+    cursor: default;
+}
+
+.collab-history .collab-history-steps .row.current {
+    font-weight: 600;
+}
+
+.collab-history .collab-history-steps .row.undone {
+    font-style: italic;
+    opacity: 0.6;
+}
+
+.collab-history .collab-history-steps .row.selected {
+    background: var(--selection);
+    outline: 1px solid var(--selection-border);
+}
+
+.collab-history .row-buttons .collab-note {
+    flex: 1;
+}
+
+.collab-history .collab-permission-list label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.panel-buttons .history-collab[hidden] {
+    display: none;
+}
+
+.collab-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 0, 0, 0.35);
+    flex: none;
+}
+
+.collab-thumb canvas {
+    display: block;
+    border: 1px solid var(--border);
+    background: repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0 / 12px 12px;
+}
+
+.settings .disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.collab-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 40px;
+    z-index: 1000;
+    max-width: min(380px, calc(100vw - 32px));
+    padding: 10px 12px;
+    background: var(--window);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Direcciones y códigos difuminados (clic para mostrar u ocultar), con su botón de copiar. */
+.collab-secret-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.collab-secret {
+    display: inline-block;
+    padding: 2px 6px;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 3px;
+    transition: filter 0.15s;
+}
+
+.collab-secret.hidden {
+    filter: blur(5px);
+}
+
+.collab-secret:focus-visible {
+    outline: 1px dotted currentColor;
+}
+
+.collab-secret-row .pushbutton {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Configuración > Colaboración: la vista simplificada (recuadros y explicaciones a la vista) y la compacta. */
+.collab-page {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.collab-page.simple {
+    gap: 12px;
+}
+
+.collab-view .pushbutton.checked {
+    background: var(--button-pressed);
+    border-color: var(--accent);
+}
+
+.collab-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+.collab-card > legend {
+    padding: 0 4px;
+    font-weight: 600;
+}
+
+.collab-field {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.collab-field input[type="text"],
+.collab-field input[type="password"] {
+    width: min(360px, 100%);
+}
+
+.collab-option {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.collab-explain {
+    display: block;
+    margin-left: 22px;
+    opacity: 0.8;
+    line-height: 1.35;
+}
+
+.collab-field > .collab-explain {
+    margin-left: 0;
+}
+
+.collab-indent {
+    margin-left: 22px;
+}
+
+.collab-indent[hidden],
+.collab-ids-box[hidden] {
+    display: none;
+}
+
+.collab-page .collab-title {
+    font-weight: 600;
+    margin: 4px 0;
+}
+
+.collab-big .pushbutton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 4px 14px;
+}
+
+.collab-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    max-width: 560px;
+}
+
+.collab-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    align-self: flex-start;
+    padding: 2px 8px;
+}
+
+.collab-more-box {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.collab-more-box[hidden] {
+    display: none;
+}
+
+.collab-servers-box {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: min(420px, 100%);
+}
+
+.collab-servers {
+    width: 100%;
+    font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace;
+    white-space: pre;
+    resize: vertical;
+}
+
+/* Unirse en la red local: la lista de sesiones cercanas. */
+.collab-join {
+    max-width: 620px;
+}
+
+.collab-found-box {
+    max-height: 180px;
+    min-height: 110px;
+    overflow: auto;
+    border: 1px solid var(--field);
+    background: var(--base);
+}
+
+.collab-found {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.collab-found th {
+    position: sticky;
+    top: 0;
+    text-align: left;
+    font-weight: normal;
+    padding: 3px 6px;
+    background: var(--window);
+    border-bottom: 1px solid var(--line);
+}
+
+.collab-found td {
+    padding: 3px 6px;
+    white-space: nowrap;
+}
+
+.collab-found td .icon {
+    vertical-align: middle;
+}
+
+.collab-found tbody tr:not(.empty) {
+    cursor: pointer;
+}
+
+.collab-found tbody tr:not(.empty):hover {
+    background: var(--hover);
+}
+
+.collab-found tbody tr.selected {
+    background: var(--selection);
+}
+
+.collab-found tbody tr.empty td {
+    opacity: 0.7;
 }

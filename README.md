@@ -30,6 +30,34 @@ Chromium-based browsers get the most out of it: saving straight back to the open
 reading the clipboard from the menus use their File System Access and Clipboard APIs. Firefox and
 Safari download the saved file and paste with Ctrl+V instead.
 
+## Collaborative mode
+
+Edit the same image with other people, from browsers or from Kaint (**File → Collaboration**,
+settings in **Settings → Collaboration**, with a simplified and a compact view):
+
+- **P2P (over the Internet, the default)**: **Host the current image** and share the session code;
+  the others choose **Join with a code…**. The browser hosts on its own: the computers find each other
+  through public WebTorrent trackers (only the WebRTC offers and answers, signed with the code, go
+  through them) and the image goes straight from one to the other. Works from `https://` too.
+- **Local network**: **Join a session…** lists the nearby sessions (when the page was opened from a
+  session's address or with the server below running on this computer) or takes the host's address.
+  Kaint serves this web version itself: open the `http://` address its session window shows. A page
+  opened over `https://` can't reach a session on the local network. To **host** on the local network
+  from the browser, run the small server in `tools/` (Node.js 18 or newer, no dependencies) and open
+  the address it prints on the same computer:
+
+  ```bash
+  node tools/collab-server.mjs        # http://localhost:47913/ — others use http://<your-ip>:47913/
+  ```
+
+  It also announces the session so Kaint finds it, prints a key to host from another computer, and
+  is a P2P signaling server at `ws://<your-ip>:47913/signal` if you'd rather not use the public ones.
+
+Addresses and session codes stay blurred until clicked (they don't leak into screenshots or
+streams), with a button to copy them. Changes are live between browsers, between copies of Kaint
+and between Kaint and the web; with the host's real-time option off, guests edit a draft with its
+own history and suggest it to the host, who accepts it. The protocol is described in [docs/collaboration.md](../docs/collaboration.md).
+
 ## What's in it
 
 - **The Kaint interface**: menus, the main toolbar and the tool options bar, Kaint's drawn tool
@@ -72,10 +100,12 @@ Safari download the saved file and paste with Ctrl+V instead.
   modes) and Grow, Shrink and Feather Selection; **View** > Pixels, Inches and Centimeters for the
   rulers and the status bar.
 - **Files** like Kaint's: opens PNG, JPEG, WebP, GIF (animated GIFs as one layer per frame), BMP,
-  AVIF, ICO, TGA, TIFF, DDS, QOI and Netpbm (PPM, PGM, PBM) images, **OpenRaster (.ora)** and
-  **Paint.NET (.pdn)** with their layers; saves **Paint.NET (.pdn)** and OpenRaster with their
-  layers, PNG, JPEG, WebP, DDS, TIFF, GIF (animated, with Kaint's advanced options), BMP, TGA, ICO,
-  QOI and Netpbm (PPM). Animated GIFs open as layers or
+  AVIF, ICO, TGA, TIFF, DDS, QOI and Netpbm (PPM, PGM, PBM) images (HEIC and JPEG XL too, in the
+  browsers that read them, like Safari), **OpenRaster (.ora)**, **Paint.NET (.pdn)** and
+  **Photoshop (.psd, and .psb large documents)** with their layers; saves **Paint.NET (.pdn)**,
+  OpenRaster and **Photoshop (.psd)** with their layers, PNG, JPEG, WebP, DDS, TIFF, GIF (animated,
+  with Kaint's advanced options), BMP, TGA, ICO, QOI and Netpbm (PPM), plus AVIF when the browser
+  can encode it. Animated GIFs open as layers or
   as separate images, and save from the layers or from the open images you pick. **Save Configuration** shows the encoded file and its size, with the
   quality, bit depth, dithering and transparency threshold. **Image > Animation** edits the frame
   durations and **Image > Color Profile** converts or assigns sRGB, Adobe RGB, Display P3 or

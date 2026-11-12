@@ -587,52 +587,48 @@ function pdnPerlin(x, y, detail, roughness, seed) {
 
 // --- Curvas y niveles ---------------------------------------------------------------------
 
-// Interpolación cúbica monótona (Fritsch–Carlson), sin sobreoscilación.
-export function curveLut(points) {
+// SplineInterpolator de Paint.NET (CurvesValue::lut de Kaint): spline cúbica natural (segunda
+// derivada nula en los extremos) que pasa por todos los puntos. Entre dos puntos casi a la misma
+// altura la curva se arquea en vez de quedarse plana, como en Paint.NET. Devuelve la función.
+export function curveSpline(points) {
     const pts = [...points].sort((a, b) => a[0] - b[0]).filter((p, i, list) => i === 0 || Math.abs(p[0] - list[i - 1][0]) > 1e-9);
-    const out = new Uint8Array(256);
-    const n = pts.length;
-    if (n === 0) {
-        for (let i = 0; i < 256; ++i) out[i] = i;
-        return out;
-    }
-    if (n === 1)
-        return out.fill(clamp255f(pts[0][1]));
-    const d = new Float64Array(n - 1), m = new Float64Array(n);
-    for (let k = 0; k < n - 1; ++k)
-        d[k] = (pts[k + 1][1] - pts[k][1]) / (pts[k + 1][0] - pts[k][0]);
-    m[0] = d[0];
-    m[n - 1] = d[n - 2];
-    for (let k = 1; k < n - 1; ++k)
-        m[k] = d[k - 1] * d[k] <= 0 ? 0 : (d[k - 1] + d[k]) / 2;
-    for (let k = 0; k < n - 1; ++k) {
-        if (d[k] === 0) {
-            m[k] = m[k + 1] = 0;
-            continue;
+    const n = pts.length, xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]), y2 = new Float64Array(n);
+    if (n >= 3) {
+        // Algoritmo de la matriz tridiagonal: descomposición y sustitución hacia atrás.
+        const u = new Float64Array(n);
+        for (let i = 1; i < n - 1; ++i) {
+            const wx = xs[i + 1] - xs[i - 1], sig = (xs[i] - xs[i - 1]) / wx, p = sig * y2[i - 1] + 2;
+            y2[i] = (sig - 1) / p;
+            const ddydx = (ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) - (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
+            u[i] = ((6 * ddydx) / wx - sig * u[i - 1]) / p;
         }
-        const a = m[k] / d[k], b = m[k + 1] / d[k], s = a * a + b * b;
-        if (s > 9) {
-            const t = 3 / Math.sqrt(s);
-            m[k] = t * a * d[k];
-            m[k + 1] = t * b * d[k];
-        }
+        y2[n - 1] = 0;
+        for (let i = n - 2; i >= 0; --i)
+            y2[i] = y2[i] * y2[i + 1] + u[i];
     }
-    let k = 0;
-    for (let i = 0; i < 256; ++i) {
-        let y;
-        if (i <= pts[0][0]) {
-            y = pts[0][1];
-        } else if (i >= pts[n - 1][0]) {
-            y = pts[n - 1][1];
-        } else {
-            while (k < n - 2 && i > pts[k + 1][0])
-                ++k;
-            const h = pts[k + 1][0] - pts[k][0], t = (i - pts[k][0]) / h, t2 = t * t, t3 = t2 * t;
-            y = (2 * t3 - 3 * t2 + 1) * pts[k][1] + (t3 - 2 * t2 + t) * h * m[k] + (-2 * t3 + 3 * t2) * pts[k + 1][1]
-                + (t3 - t2) * h * m[k + 1];
+    // Fuera de los puntos sigue el tramo del extremo, como en Paint.NET.
+    return (x) => {
+        if (n === 0)
+            return x;
+        if (n === 1)
+            return ys[0];
+        let lo = 0, hi = n - 1;
+        while (hi - lo > 1) {
+            const k = (hi + lo) >> 1;
+            if (xs[k] > x)
+                hi = k;
+            else
+                lo = k;
         }
-        out[i] = clamp255f(y);
-    }
+        const h = xs[hi] - xs[lo], a = (xs[hi] - x) / h, b = (x - xs[lo]) / h;
+        return a * ys[lo] + b * ys[hi] + ((a * a * a - a) * y2[lo] + (b * b * b - b) * y2[hi]) * (h * h) / 6;
+    };
+}
+
+export function curveLut(points) {
+    const spline = curveSpline(points), out = new Uint8Array(256);
+    for (let i = 0; i < 256; ++i)
+        out[i] = clamp255f(spline(i));
     return out;
 }
 
@@ -1157,23 +1153,61 @@ const adjustments = [
             withProps(P.int("lightness", "Claridad", -100, 100, 0), { gradient: [[0, 0, 0], [128, 128, 128], [255, 255, 255]] }),
         ],
         run(a) {
-            // HueSaturationLightness de Paint.NET.
+            // HueSaturationLightness de Paint.NET, con rgbToHsv/hsvToRgb escritos aquí mismo (sin
+            // crear un arreglo por píxel), sin pasar por HSV si el matiz no cambia (la ida y vuelta
+            // da el mismo color) y con un caché de los colores ya calculados: la vista previa sigue
+            // al deslizador (como en Kaint).
             const hueDelta = Math.round(a.values.hue), satFactor = idiv(Math.round(a.values.saturation) * 1024, 100);
             const lightness = Math.round(a.values.lightness), blendAlpha = idiv(Math.abs(lightness) * 255, 100);
             const blendTo = lightness > 0 ? 255 : 0;
-            mapStraight(a, (c) => {
+            const rotate = ((hueDelta % 360) + 360) % 360 !== 0;
+            const keys = new Int32Array(1 << 14).fill(-1), values = new Int32Array(1 << 14);
+            const mix = (x) => x + idiv((blendTo - x) * blendAlpha + 127, 255);
+            const compute = (c) => {
                 const i = intensity(c);
-                const r = clamp255((i * 1024 + (qRed(c) - i) * satFactor) >> 10);
-                const g = clamp255((i * 1024 + (qGreen(c) - i) * satFactor) >> 10);
-                const b = clamp255((i * 1024 + (qBlue(c) - i) * satFactor) >> 10);
-                let [h, s, v] = rgbToHsv(r, g, b);
-                h = (h + hueDelta + 720) % 360;
-                let out = hsvToRgb(h, s, v, qAlpha(c));
-                if (lightness !== 0) {
-                    const mix = (x) => x + idiv((blendTo - x) * blendAlpha + 127, 255);
-                    out = qRgba(mix(qRed(out)), mix(qGreen(out)), mix(qBlue(out)), qAlpha(c));
+                let r = clamp255((i * 1024 + (qRed(c) - i) * satFactor) >> 10);
+                let g = clamp255((i * 1024 + (qGreen(c) - i) * satFactor) >> 10);
+                let b = clamp255((i * 1024 + (qBlue(c) - i) * satFactor) >> 10);
+                const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+                if (rotate && mx !== mn) {
+                    const rf = r / 255, gf = g / 255, bf = b / 255;
+                    const v = mx / 255, delta = v - mn / 255, s = delta / v;
+                    let h = r === mx ? (gf - bf) / delta : g === mx ? 2 + (bf - rf) / delta : 4 + (rf - gf) / delta;
+                    h *= 60;
+                    if (h < 0)
+                        h += 360;
+                    h = (((h + hueDelta + 720) % 360) % 360) / 60;
+                    const k = Math.floor(h), f = h - k;
+                    const p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+                    let rr, gg, bb;
+                    switch (k) {
+                    case 0: rr = v; gg = t; bb = p; break;
+                    case 1: rr = q; gg = v; bb = p; break;
+                    case 2: rr = p; gg = v; bb = t; break;
+                    case 3: rr = p; gg = q; bb = v; break;
+                    case 4: rr = t; gg = p; bb = v; break;
+                    default: rr = v; gg = p; bb = q; break;
+                    }
+                    r = clamp255f(rr * 255);
+                    g = clamp255f(gg * 255);
+                    b = clamp255f(bb * 255);
                 }
-                return out;
+                if (lightness !== 0) {
+                    r = mix(r);
+                    g = mix(g);
+                    b = mix(b);
+                }
+                // Como qRgba sin el alfa (rojo en el byte bajo).
+                return (b << 16) | (g << 8) | r;
+            };
+            mapStraight(a, (c) => {
+                const rgb = c & 0xffffff;
+                const slot = Math.imul(rgb, 2654435761) >>> 18;
+                if (keys[slot] !== rgb) {
+                    keys[slot] = rgb;
+                    values[slot] = compute(c);
+                }
+                return ((c & 0xff000000) | values[slot]) >>> 0;
             });
         },
     },

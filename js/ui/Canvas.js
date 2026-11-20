@@ -30,6 +30,10 @@ export class CanvasView extends EventTarget {
         this.tool = null;
         this.zoom = 1;
         this.origin = { x: 0, y: 0 };
+        // Giro de la vista (radianes), alrededor del centro: con dos dedos, como en las aplicaciones de
+        // dibujo del móvil. Las coordenadas de "vista" de las herramientas son las de la vista sin
+        // girar; las de la pantalla se convierten con screenToView.
+        this.rotation = 0;
         this.fitOnResize = true;
         this.pixelGrid = false;
         this.mouse = null;
@@ -49,9 +53,21 @@ export class CanvasView extends EventTarget {
         workspace.appendChild(this.miniIcon);
         this.rulersVisible = !!Settings.get("rulers");
         workspace.classList.toggle("rulers", this.rulersVisible);
-        new ResizeObserver(() => this.resized()).observe(workspace);
+        // También el lienzo: mostrar u ocultar las barras de desplazamiento o las reglas le cambia el
+        // tamaño sin cambiar el del área de trabajo.
+        const observer = new ResizeObserver(() => this.resized());
+        observer.observe(workspace);
+        observer.observe(canvas);
         this.installEvents();
         this.installScrollbars();
+        this.installRotationChip();
+        // Barras de desplazamiento (Configuración): en el teléfono, ocultas por defecto (como en las
+        // aplicaciones de dibujo del móvil: la imagen se mueve con dos dedos).
+        this.applyScrollbarSetting();
+        window.addEventListener("kaint-settings", (e) => {
+            if (e.detail?.key === "scrollbars")
+                this.applyScrollbarSetting();
+        });
         // Las hormigas avanzan 25 píxeles por segundo (una vuelta del patrón en 0,32 s), casi como
         // en Paint.NET, como en Kaint: 1 px cada 40 ms (a 1 px cada 120 ms se arrastraban).
         setInterval(() => this.stepAnts(), 40);
@@ -72,6 +88,86 @@ export class CanvasView extends EventTarget {
 
     viewSize() {
         return { w: this.canvas.clientWidth, h: this.canvas.clientHeight };
+    }
+
+    // De la pantalla (relativa al lienzo) a la vista sin girar, y al revés.
+    screenToView(x, y) {
+        if (!this.rotation)
+            return { x, y };
+        const v = this.viewSize(), cx = v.w / 2, cy = v.h / 2;
+        const c = Math.cos(-this.rotation), s = Math.sin(-this.rotation);
+        return { x: cx + (x - cx) * c - (y - cy) * s, y: cy + (x - cx) * s + (y - cy) * c };
+    }
+
+    viewToScreen(x, y) {
+        if (!this.rotation)
+            return { x, y };
+        const v = this.viewSize(), cx = v.w / 2, cy = v.h / 2;
+        const c = Math.cos(this.rotation), s = Math.sin(this.rotation);
+        return { x: cx + (x - cx) * c - (y - cy) * s, y: cy + (x - cx) * s + (y - cy) * c };
+    }
+
+    // Un desplazamiento en la pantalla (dedo, rueda, Mano) en la vista sin girar.
+    scrollByScreen(dx, dy) {
+        if (this.rotation) {
+            const c = Math.cos(-this.rotation), s = Math.sin(-this.rotation);
+            [dx, dy] = [dx * c - dy * s, dx * s + dy * c];
+        }
+        this.scrollBy(dx, dy);
+    }
+
+    setRotation(angle) {
+        // Entre -180° y 180°.
+        angle = Math.atan2(Math.sin(angle), Math.cos(angle));
+        if (Math.abs(angle) < 1e-6)
+            angle = 0;
+        if (angle === this.rotation)
+            return;
+        this.rotation = angle;
+        this.update();
+        this.updateRotationChip();
+        this.dispatchEvent(new Event("rotation"));
+    }
+
+    // Con la vista girada, un aviso con el ángulo en una esquina del área de trabajo: al tocarlo, la
+    // imagen vuelve derecha (con una animación).
+    installRotationChip() {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "rotation-chip";
+        chip.addEventListener("pointerdown", (e) => e.stopPropagation());
+        chip.addEventListener("click", () => {
+            const from = this.rotation;
+            if (!from)
+                return;
+            const start = performance.now(), ms = Settings.get("animations") ? 220 : 0;
+            const step = (now) => {
+                const t = ms ? Math.min(1, (now - start) / ms) : 1;
+                this.setRotation(from * (1 - (1 - (1 - t) ** 3)));
+                if (t < 1)
+                    requestAnimationFrame(step);
+            };
+            requestAnimationFrame(step);
+        });
+        this.workspace.appendChild(chip);
+        this.rotationChip = chip;
+        this.updateRotationChip();
+    }
+
+    updateRotationChip() {
+        const chip = this.rotationChip;
+        if (!chip)
+            return;
+        chip.classList.toggle("shown", !!this.rotation);
+        const deg = Math.round((this.rotation * 180) / Math.PI);
+        chip.textContent = `⟲ ${deg}°`;
+        chip.title = deg ? "0°" : "";
+    }
+
+    applyScrollbarSetting() {
+        const value = Settings.get("scrollbars");
+        const phone = matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) <= 600;
+        this.workspace.classList.toggle("no-scrollbars", value === undefined || value === null ? phone : !value);
     }
 
     imageToView(x, y) {
@@ -151,8 +247,66 @@ export class CanvasView extends EventTarget {
                 transformPixels(part.data, doc.colorProfile, null);
                 ctx.putImageData(part, dirty.x, dirty.y);
             }
+            this.updateDisplay(doc, dirty);
         }
         doc.compositeDirty = null;
+    }
+
+    // Lo que se dibuja en pantalla: una copia de la composición en un lienzo acelerado (la
+    // composición, para leer y escribir píxeles, vive en la memoria del procesador, y dibujarla en
+    // cada fotograma la volvía a subir entera a la GPU mientras se pintaba) y, al alejar el zum,
+    // sus reducciones a la mitad, a un cuarto... (como los mipmaps): se escala desde la más cercana
+    // en vez de desde la imagen entera. Solo se copia y se reduce la zona que cambia.
+    updateDisplay(doc, rect) {
+        const source = doc.compositeCanvas;
+        let d = doc.display;
+        if (!d || d.source !== source) {
+            const canvas = document.createElement("canvas");
+            canvas.width = source.width;
+            canvas.height = source.height;
+            d = doc.display = { source, canvas, ctx: canvas.getContext("2d"), levels: [] };
+            rect = { x: 0, y: 0, w: source.width, h: source.height };
+        }
+        const part = context(source).getImageData(rect.x, rect.y, rect.w, rect.h);
+        d.ctx.putImageData(part, rect.x, rect.y);
+        for (const level of d.levels)
+            if (level)
+                level.dirty = unionRect(level.dirty, rect);
+    }
+
+    // La reducción 'k' (0: la imagen entera), al día.
+    displayLevel(doc, k) {
+        const d = doc.display;
+        if (!d)
+            return doc.compositeCanvas;
+        let prev = d.canvas;
+        for (let i = 1; i <= k; i++) {
+            const w = Math.max(1, Math.ceil(prev.width / 2)), h = Math.max(1, Math.ceil(prev.height / 2));
+            let level = d.levels[i];
+            if (!level) {
+                const canvas = document.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                level = d.levels[i] = { canvas, ctx: canvas.getContext("2d"), dirty: { x: 0, y: 0, w: d.canvas.width, h: d.canvas.height } };
+            }
+            if (level.dirty) {
+                // La zona (en píxeles de la imagen) en los de esta reducción, desde la anterior.
+                const s = 2 ** i, r = level.dirty;
+                const x0 = Math.max(0, Math.floor(r.x / s)), y0 = Math.max(0, Math.floor(r.y / s));
+                const x1 = Math.min(w, Math.ceil((r.x + r.w) / s)), y1 = Math.min(h, Math.ceil((r.y + r.h) / s));
+                if (x1 > x0 && y1 > y0) {
+                    const sw = Math.min(prev.width - x0 * 2, (x1 - x0) * 2), sh = Math.min(prev.height - y0 * 2, (y1 - y0) * 2);
+                    const c = level.ctx;
+                    c.clearRect(x0, y0, x1 - x0, y1 - y0);
+                    c.imageSmoothingEnabled = true;
+                    c.imageSmoothingQuality = "medium";
+                    c.drawImage(prev, x0 * 2, y0 * 2, sw, sh, x0, y0, sw / 2, sh / 2);
+                }
+                level.dirty = null;
+            }
+            prev = level.canvas;
+        }
+        return prev;
     }
 
     // --- Zum y desplazamiento --------------------------------------------------------------
@@ -221,6 +375,7 @@ export class CanvasView extends EventTarget {
     zoomToWindow() {
         if (!this.doc)
             return;
+        this.setRotation(0);
         this.zoom = this.fitZoom();
         this.origin = { x: -1e9, y: -1e9 };
         this.clampOrigin();
@@ -231,6 +386,40 @@ export class CanvasView extends EventTarget {
         this.fitOnResize = true;
         this.update();
         this.emitZoom();
+    }
+
+    // Como en Paint.NET (y Kaint): la imagen como la deja «Zum a ventana» (al 100 % si cabe, si no
+    // ajustada) y centrada. Así no hay barras de desplazamiento y el botón cambia de icono.
+    atWindowZoom() {
+        if (!this.doc || this.rotation)
+            return false;
+        const z = this.fitZoom();
+        if (Math.abs(this.zoom - z) > z * 1e-6)
+            return false;
+        const v = this.viewSize();
+        const cx = (v.w - this.doc.width * this.scale) / 2, cy = (v.h - this.doc.height * this.scale) / 2;
+        return Math.abs(this.origin.x - cx) <= 1 && Math.abs(this.origin.y - cy) <= 1;
+    }
+
+    // El botón: a la ventana; si ya está así (sin tocar nada desde entonces), a la vista de antes.
+    toggleZoomToWindow() {
+        if (!this.doc)
+            return;
+        if (this.beforeFit && this.atWindowZoom()) {
+            const { zoom, center } = this.beforeFit;
+            this.beforeFit = null;
+            this.setZoom(zoom);
+            this.centerOn(center.x, center.y);
+            this.emitZoom();
+            return;
+        }
+        if (this.atWindowZoom()) {
+            this.beforeFit = null;
+            return;
+        }
+        const v = this.viewSize();
+        this.beforeFit = { zoom: this.zoom, center: this.viewToImage(v.w / 2, v.h / 2) };
+        this.zoomToWindow();
     }
 
     zoomToRect(r) {
@@ -266,6 +455,29 @@ export class CanvasView extends EventTarget {
         else
             this.clampOrigin();
         this.render();
+    }
+
+    // El color del área de trabajo (--workspace del tema): getComputedStyle en cada fotograma obligaba
+    // al navegador a recalcular los estilos. Se vuelve a leer cuando cambian las clases o el estilo
+    // de la página (el tema).
+    workspaceColor() {
+        const root = document.documentElement;
+        const key = `${root.className}|${root.getAttribute("style") ?? ""}`;
+        if (key !== this.workspaceKey) {
+            this.workspaceKey = key;
+            this.workspaceFill = getComputedStyle(root).getPropertyValue("--workspace").trim() || "#cfcfcf";
+        }
+        return this.workspaceFill;
+    }
+
+    // El patrón del damero, el mismo mientras no cambie el brillo.
+    checker(ctx) {
+        const brightness = Settings.get("checkerBrightness");
+        if (!this.checkerFill || this.checkerBrightness !== brightness) {
+            this.checkerBrightness = brightness;
+            this.checkerFill = checkerPattern(ctx, brightness);
+        }
+        return this.checkerFill;
     }
 
     // --- Barras de desplazamiento ----------------------------------------------------------
@@ -335,9 +547,15 @@ export class CanvasView extends EventTarget {
 
     updateScrollbars() {
         const v = this.viewSize();
+        const atWindow = this.atWindowZoom();
+        if (atWindow !== this.lastAtWindow) {
+            this.lastAtWindow = atWindow;
+            this.dispatchEvent(new Event("zoom"));
+        }
         for (const [bar, horizontal] of [[this.hScroll, true], [this.vScroll, false]]) {
             const thumb = bar.querySelector(".thumb");
-            if (!this.doc) {
+            // Sin imagen, o con la vista como la deja «Zum a ventana»: sin barras.
+            if (!this.doc || atWindow) {
                 thumb.style.display = "none";
                 continue;
             }
@@ -393,19 +611,22 @@ export class CanvasView extends EventTarget {
         if (!selection && !this.overlayAnts)
             return;
         this.antsOffset = (this.antsOffset + 1) % 8;
+        // (Las hormigas no cuentan como movimiento: con ellas, la imagen no se vería siempre con la
+        // calidad rápida.)
+        if (!this.pending)
+            this.antsOnly = true;
         this.update();
     }
 
     render() {
         const ctx = this.ctx, dpr = this.dpr, v = this.viewSize();
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        const styles = getComputedStyle(document.documentElement);
         // Con una imagen o un vídeo de fondo (tema personalizado), alrededor de la imagen se ve la
         // capa de detrás (Background.js).
         if (document.documentElement.classList.contains("workspace-media")) {
             ctx.clearRect(0, 0, v.w, v.h);
         } else {
-            ctx.fillStyle = styles.getPropertyValue("--workspace").trim() || "#cfcfcf";
+            ctx.fillStyle = this.workspaceColor();
             ctx.fillRect(0, 0, v.w, v.h);
         }
         const doc = this.doc;
@@ -416,31 +637,69 @@ export class CanvasView extends EventTarget {
             return;
         }
         this.updateComposite();
+        // Mientras algo se mueve (dedos, zum, rueda, un trazo: un fotograma tras otro), el escalado
+        // rápido; al pararse, se vuelve a dibujar con el de calidad alta. El de calidad alta de una
+        // imagen grande en cada fotograma era lo que más tardaba.
+        const now = performance.now();
+        if (!this.antsOnly) {
+            const moving = now - (this.lastRenderAt || -1e9) < 120;
+            this.lastRenderAt = now;
+            this.moving = moving;
+            clearTimeout(this.settleTimer);
+            if (moving)
+                this.settleTimer = setTimeout(() => {
+                    this.lastRenderAt = -1e9;
+                    this.moving = false;
+                    this.update();
+                }, 160);
+        }
+        this.antsOnly = false;
         const x = this.origin.x, y = this.origin.y, w = doc.width * this.scale, h = doc.height * this.scale;
         this.reportImageRect({ x, y, w, h }, v);
-        // Sombra bajo el lienzo, como Paint.NET.
-        if (Settings.get("dropShadow")) {
+        // Con la vista girada, todo lo de encima (imagen, selección, herramientas) se dibuja girado
+        // alrededor del centro.
+        if (this.rotation) {
+            ctx.translate(v.w / 2, v.h / 2);
+            ctx.rotate(this.rotation);
+            ctx.translate(-v.w / 2, -v.h / 2);
+        }
+        // Lo que se ve de la vista sin girar (con el giro, el rectángulo que la contiene).
+        const reach = this.rotation ? Math.hypot(v.w, v.h) / 2 : 0;
+        const view0 = { x: this.rotation ? v.w / 2 - reach : 0, y: this.rotation ? v.h / 2 - reach : 0 };
+        const view1 = { x: this.rotation ? v.w / 2 + reach : v.w, y: this.rotation ? v.h / 2 + reach : v.h };
+        // Lo visible de la imagen (con un margen para la sombra): con mucho zum, la sombra y el damero
+        // de toda la imagen (miles de píxeles fuera de la vista) costaban en cada fotograma.
+        const vx0 = Math.max(x, view0.x - 24), vy0 = Math.max(y, view0.y - 24);
+        const vx1 = Math.min(x + w, view1.x + 24), vy1 = Math.min(y + h, view1.y + 24);
+        // Sombra bajo el lienzo, como Paint.NET: unos marcos cada vez más claros, como la de Kaint
+        // (el desenfoque de una sombra del tamaño de la vista en cada fotograma costaba mucho al
+        // girar o pellizcar).
+        if (Settings.get("dropShadow") && vx1 > vx0 && vy1 > vy0) {
             ctx.save();
-            ctx.shadowColor = "rgba(0,0,0,0.35)";
-            ctx.shadowBlur = 8;
-            ctx.shadowOffsetX = 1;
-            ctx.shadowOffsetY = 2;
-            ctx.fillStyle = "#808080";
-            ctx.fillRect(x, y, w, h);
+            ctx.lineWidth = 1;
+            for (let i = 1; i <= 6; i++) {
+                ctx.strokeStyle = `rgba(0,0,0,${(0.3 * (7 - i)) / 6})`;
+                ctx.strokeRect(vx0 - i + 1.5, vy0 - i + 2.5, vx1 - vx0 + 2 * i - 2, vy1 - vy0 + 2 * i - 2);
+            }
             ctx.restore();
         }
         ctx.save();
         ctx.beginPath();
         ctx.rect(x, y, w, h);
         ctx.clip();
-        ctx.fillStyle = checkerPattern(ctx, Settings.get("checkerBrightness"));
+        ctx.fillStyle = this.checker(ctx);
         ctx.save();
         ctx.translate(Math.round(x), Math.round(y));
-        ctx.fillRect(0, 0, w + 1, h + 1);
+        // (El damero empieza en la esquina de la imagen; solo se pinta lo que se ve.)
+        const cx0 = Math.max(0, Math.floor((view0.x - x) / 16) * 16), cy0 = Math.max(0, Math.floor((view0.y - y) / 16) * 16);
+        ctx.fillRect(cx0, cy0, Math.max(0, Math.min(w + 1, view1.x - x + 16) - cx0), Math.max(0, Math.min(h + 1, view1.y - y + 16) - cy0));
         ctx.restore();
+        // Al alejar, desde la reducción más cercana que aún tenga al menos la resolución de la pantalla.
+        const device = this.scale * this.dpr;
+        const level = device < 1 ? Math.max(0, Math.floor(Math.log2(1 / device))) : 0;
         ctx.imageSmoothingEnabled = this.zoom < 1;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(doc.compositeCanvas, x, y, w, h);
+        ctx.imageSmoothingQuality = this.moving ? "low" : "high";
+        ctx.drawImage(this.displayLevel(doc, level), x, y, w, h);
         ctx.restore();
         if (this.pixelGrid && this.zoom >= 2)
             this.drawPixelGrid(ctx, v);
@@ -490,6 +749,41 @@ export class CanvasView extends EventTarget {
             return element.tagName === "SPAN" || (element.tagName === "IMG" && !element.complete) ? null : element;
         };
         ctx.save();
+        // Primero, debajo de todos los punteros, lo que cada uno está dibujando (un esbozo: el cambio de
+        // verdad llega al terminar).
+        for (const p of list) {
+            const live = p.live;
+            if (!live?.kind || !live.path?.length)
+                continue;
+            const erase = !live.color;
+            const width = Math.max(1, live.size * this.scale);
+            ctx.save();
+            ctx.globalAlpha = erase ? 0.45 : 0.85;
+            ctx.strokeStyle = ctx.fillStyle = erase ? p.color : live.color;
+            ctx.lineCap = ctx.lineJoin = "round";
+            ctx.lineWidth = live.kind === 1 ? width : Math.max(1.5, Math.min(width, 6));
+            if (erase)
+                ctx.setLineDash([6, 4]);
+            const pts = live.path.map((q) => this.imageToView(q.x, q.y));
+            const a = pts[0], b = pts[pts.length - 1];
+            ctx.beginPath();
+            if (live.kind === 2) {
+                ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                ctx.stroke();
+            } else if (live.kind === 3) {
+                ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+            } else if (pts.length === 1) {
+                ctx.arc(a.x, a.y, width / 2, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                ctx.moveTo(a.x, a.y);
+                for (let i = 1; i < pts.length; i++)
+                    ctx.lineTo(pts[i].x, pts[i].y);
+                ctx.stroke();
+            }
+            ctx.restore();
+        }
         const font = getComputedStyle(document.documentElement).getPropertyValue("--font").trim() || "sans-serif";
         ctx.font = `12px ${font}`;
         ctx.textBaseline = "middle";
@@ -536,7 +830,60 @@ export class CanvasView extends EventTarget {
             const gray = (parseInt(c.slice(0, 2), 16) * 11 + parseInt(c.slice(2, 4), 16) * 16 + parseInt(c.slice(4, 6), 16) * 5) / 32;
             ctx.fillStyle = gray > 165 ? "#000000" : "#ffffff";
             ctx.fillText(p.name, tx, y + h / 2 + 0.5);
+            if (p.bubble)
+                this.drawBubble(ctx, v, p.bubble, p.color);
         }
+        ctx.restore();
+    }
+
+    // Su último mensaje del chat: un globo encima del puntero, con un pico hacia él (hasta 5 líneas).
+    drawBubble(ctx, v, text, color) {
+        const maxWidth = 240, lineHeight = 16, lines = [];
+        let line = "";
+        for (const word of text.split(/\s+/)) {
+            const next = line ? `${line} ${word}` : word;
+            if (ctx.measureText(next).width > maxWidth && line) {
+                lines.push(line);
+                line = word;
+            } else {
+                line = next;
+            }
+        }
+        if (line)
+            lines.push(line);
+        if (lines.length > 5) {
+            lines.length = 5;
+            lines[4] += "…";
+        }
+        const w = Math.min(maxWidth, Math.max(...lines.map((l) => ctx.measureText(l).width))) + 16;
+        const h = lines.length * lineHeight + 10;
+        const x = v.x + 4, y = v.y - 12 - h;
+        ctx.save();
+        // Un solo contorno con la cola (antes, el globo y la cola eran dos figuras y se veía la línea
+        // del borde entre ellas).
+        const r = 8;
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.lineTo(x + 22, y + h);
+        ctx.lineTo(v.x + 2, v.y - 2);
+        ctx.lineTo(x + 10, y + h);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+        ctx.shadowColor = "rgba(0,0,0,0.25)";
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetY = 1;
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        ctx.fill();
+        ctx.shadowColor = "transparent";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = "#141414";
+        ctx.textBaseline = "top";
+        lines.forEach((l, i) => ctx.fillText(l, x + 8, y + 6 + i * lineHeight, maxWidth));
         ctx.restore();
     }
 
@@ -1036,10 +1383,12 @@ export class CanvasView extends EventTarget {
 
     toolEvent(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const vx = e.clientX - rect.left, vy = e.clientY - rect.top;
+        const sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+        // (Con la vista girada, las herramientas trabajan en la vista sin girar.)
+        const { x: vx, y: vy } = this.screenToView(sx, sy);
         const p = this.viewToImage(vx, vy);
         // Donde está el puntero (también el dedo o el lápiz): junto a él salen los avisos.
-        this.lastPointer = { x: vx, y: vy };
+        this.lastPointer = { x: sx, y: sy };
         return {
             x: p.x, y: p.y, vx, vy, button: e.button === 2 ? "right" : e.button === 1 ? "middle" : "left",
             shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey, alt: e.altKey, pressure: e.pressure || 0.5,
@@ -1079,7 +1428,9 @@ export class CanvasView extends EventTarget {
         if (!show)
             return;
         const [dx, dy] = this.mini.ibeam ? [5, 3] : [12, 13];
-        this.miniIcon.style.transform = `translate(${Math.round(this.canvas.offsetLeft + this.mouse.vx + dx)}px, ${Math.round(this.canvas.offsetTop + this.mouse.vy + dy)}px)`;
+        // (Junto al puntero en la pantalla, también con la vista girada.)
+        const at = this.viewToScreen(this.mouse.vx, this.mouse.vy);
+        this.miniIcon.style.transform = `translate(${Math.round(this.canvas.offsetLeft + at.x + dx)}px, ${Math.round(this.canvas.offsetTop + at.y + dy)}px)`;
     }
 
     // Con los pinceles, el contorno va en el propio cursor si cabe: así no se queda atrás del
@@ -1141,7 +1492,13 @@ export class CanvasView extends EventTarget {
             return false;
         this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (this.gesture) {
-            this.updateGesture();
+            // Una vez por fotograma: cada dedo manda varios movimientos por fotograma y cada uno
+            // recolocaba la vista, las barras y el zum de la barra de estado (iba a tirones).
+            if (!this.gestureFrame)
+                this.gestureFrame = requestAnimationFrame(() => {
+                    this.gestureFrame = 0;
+                    this.updateGesture();
+                });
             return true;
         }
         if (this.touchBlocked)
@@ -1226,33 +1583,55 @@ export class CanvasView extends EventTarget {
         return {
             mid: { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top },
             dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+            angle: Math.atan2(b.y - a.y, b.x - a.x),
         };
     }
 
     startGesture() {
         if (!this.doc)
             return;
-        const { mid, dist } = this.touchPoints();
-        this.gesture = { dist, zoom: this.zoom, image: this.viewToImage(mid.x, mid.y), samples: [] };
+        const { mid, dist, angle } = this.touchPoints();
+        const u = this.screenToView(mid.x, mid.y);
+        this.gesture = { dist, angle, zoom: this.zoom, rotation: this.rotation, rotating: false,
+                         image: this.viewToImage(u.x, u.y), samples: [] };
         this.fitOnResize = false;
         this.touchBlocked = true;
         this.stopAutoScroll();
         this.updateCursor();
     }
 
-    // Pellizcar acerca o aleja con el punto de la imagen que estaba entre los dedos siempre entre
-    // ellos (también al arrastrar a la vez); cerca del 100 % se queda en él.
+    // Con dos dedos, como en las aplicaciones de dibujo del móvil: pellizcar acerca o aleja, girarlos
+    // gira la imagen (Configuración: «Girar la imagen con dos dedos»; con imán a 0°, 90°, 180° y 270°)
+    // y arrastrarlos la mueve, todo a la vez, con el punto de la imagen que estaba entre los dedos
+    // siempre entre ellos; cerca del 100 % se queda en él.
     updateGesture() {
         const g = this.gesture;
         if (!g || this.touches.size < 2 || !this.doc)
             return;
-        const { mid, dist } = this.touchPoints();
+        const { mid, dist, angle } = this.touchPoints();
         let zoom = Math.min(64, Math.max(0.01, (g.zoom * dist) / g.dist));
         if (Math.abs(zoom - 1) < 0.04)
             zoom = 1;
+        if (Settings.get("touchRotate") !== false) {
+            let turn = Math.atan2(Math.sin(angle - g.angle), Math.cos(angle - g.angle));
+            // Hasta girar un poco (8°) solo se pellizca: así acercar no tuerce la imagen sin querer.
+            if (!g.rotating && Math.abs(turn) > (8 * Math.PI) / 180) {
+                g.rotating = true;
+                g.angle = angle;
+                turn = 0;
+            }
+            if (g.rotating) {
+                let r = g.rotation + turn;
+                const quarter = Math.round(r / (Math.PI / 2)) * (Math.PI / 2);
+                if (Math.abs(r - quarter) < (5 * Math.PI) / 180)
+                    r = quarter;
+                this.setRotation(r);
+            }
+        }
         const changed = zoom !== this.zoom;
         this.zoom = zoom;
-        this.origin = { x: mid.x - g.image.x * this.scale, y: mid.y - g.image.y * this.scale };
+        const u = this.screenToView(mid.x, mid.y);
+        this.origin = { x: u.x - g.image.x * this.scale, y: u.y - g.image.y * this.scale };
         this.clampOrigin();
         this.update();
         if (changed)
@@ -1264,6 +1643,11 @@ export class CanvasView extends EventTarget {
     }
 
     endGesture() {
+        if (this.gestureFrame) {
+            cancelAnimationFrame(this.gestureFrame);
+            this.gestureFrame = 0;
+            this.updateGesture();
+        }
         const g = this.gesture;
         this.gesture = null;
         if (!g)
@@ -1286,7 +1670,7 @@ export class CanvasView extends EventTarget {
             const ms = Math.min(48, now - last);
             last = now;
             const before = { ...this.origin };
-            this.scrollBy(-vx * ms, -vy * ms);
+            this.scrollByScreen(-vx * ms, -vy * ms);
             const decay = Math.pow(0.996, ms);
             vx *= decay;
             vy *= decay;
@@ -1353,6 +1737,8 @@ export class CanvasView extends EventTarget {
                 return;
             this.mouse = null;
             this.placeMini();
+            cancelAnimationFrame(this.cursorFrame);
+            this.cursorFrame = 0;
             this.dispatchEvent(new CustomEvent("cursor", { detail: null }));
             this.update();
         });
@@ -1363,7 +1749,7 @@ export class CanvasView extends EventTarget {
             e.preventDefault();
             this.stopInertia();
             const rect = c.getBoundingClientRect();
-            const anchor = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+            const anchor = this.screenToView(e.clientX - rect.left, e.clientY - rect.top);
             const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
             // Como en Kaint: Ctrl+rueda acerca o aleja hacia el puntero con pasos de 1,12 por
             // muesca (parando en el 100 %), Mayús+rueda desplaza en horizontal y la rueda sola, en
@@ -1375,9 +1761,9 @@ export class CanvasView extends EventTarget {
                     z = 1;
                 this.setZoom(z, anchor);
             } else if (e.shiftKey && !e.deltaX) {
-                this.scrollBy(e.deltaY * unit, 0);
+                this.scrollByScreen(e.deltaY * unit, 0);
             } else {
-                this.scrollBy(e.deltaX * unit, e.deltaY * unit);
+                this.scrollByScreen(e.deltaX * unit, e.deltaY * unit);
             }
             this.followPointer(anchor);
         }, { passive: false });
@@ -1412,15 +1798,55 @@ export class CanvasView extends EventTarget {
         this.tool.onPointerMove?.({ ...this.mouse, buttons: 0 });
     }
 
+    // La posición del puntero para la barra de estado y las reglas, una vez por fotograma (con el
+    // lápiz o el dedo llegan muchos movimientos por fotograma).
+    emitCursor(te) {
+        this.cursorEvent = te;
+        if (this.cursorFrame)
+            return;
+        this.cursorFrame = requestAnimationFrame(() => {
+            this.cursorFrame = 0;
+            this.dispatchEvent(new CustomEvent("cursor", { detail: this.cursorEvent }));
+        });
+    }
+
+    // Como Kaint (y Paint.NET): con las herramientas de pintar, las flechas mueven el pincel de un
+    // píxel al siguiente (con Ctrl, diez); si se está pintando, el trazo sigue. El navegador no deja
+    // mover el puntero del sistema: lo sigue el contorno del pincel.
+    nudgePointer(e) {
+        const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+        if (!d || e.altKey || e.shiftKey || e.metaKey || !this.doc || this.panning || !this.tool?.arrowKeysMovePointer?.())
+            return false;
+        const step = e.ctrlKey ? 10 : 1;
+        let from = this.mouse;
+        if (!from) {
+            const v = this.viewSize(), at = this.lastPointer || { x: v.w / 2, y: v.h / 2 };
+            const view = this.screenToView(at.x, at.y);
+            from = { ...this.viewToImage(view.x, view.y), pressure: 0.5, pointerType: "mouse" };
+        }
+        const x = Math.floor(from.x) + 0.5 + d[0] * step, y = Math.floor(from.y) + 0.5 + d[1] * step;
+        const v = this.imageToView(x, y);
+        const te = { button: "left", pressure: 0.5, pointerType: "mouse", ...from, x, y, vx: v.x, vy: v.y,
+                     shift: false, ctrl: false, alt: false, original: null };
+        this.mouse = te;
+        this.lastMouse = { x, y };
+        if (this.dragEvent)
+            this.dragEvent = te;
+        this.dispatchEvent(new CustomEvent("cursor", { detail: te }));
+        this.tool.onPointerMove?.(te);
+        this.update();
+        return true;
+    }
+
     pointerMove(e) {
         const te = this.toolEvent(e);
         this.mouse = te;
         this.lastMouse = { x: te.x, y: te.y };
         this.placeMini();
         this.checkOutlineEdge(e);
-        this.dispatchEvent(new CustomEvent("cursor", { detail: te }));
+        this.emitCursor(te);
         if (this.panning) {
-            this.scrollBy(this.panning.x - e.clientX, this.panning.y - e.clientY);
+            this.scrollByScreen(this.panning.x - e.clientX, this.panning.y - e.clientY);
             this.panning.x = e.clientX;
             this.panning.y = e.clientY;
             // Con el dedo, la Mano deja la imagen con inercia al soltar.

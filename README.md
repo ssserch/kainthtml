@@ -100,13 +100,18 @@ own history and suggest it to the host, who accepts it. The protocol is describe
   modes) and Grow, Shrink and Feather Selection; **View** > Pixels, Inches and Centimeters for the
   rulers and the status bar.
 - **Files** like Kaint's: opens PNG, JPEG, WebP, GIF (animated GIFs as one layer per frame), BMP,
-  AVIF, ICO, TGA, TIFF, DDS, QOI and Netpbm (PPM, PGM, PBM) images (HEIC and JPEG XL too, in the
-  browsers that read them, like Safari), **OpenRaster (.ora)**, **Paint.NET (.pdn)** and
+  AVIF, ICO, CUR, TGA, TIFF, DDS, QOI, PCX, SGI, Farbfeld, Netpbm (PPM, PGM, PBM), PAM and SVG images
+  (and HEIC, JPEG XL, OpenEXR, JPEG 2000, Radiance HDR, PFM, Sun Raster, GIMP, PlayStation TIM and
+  macOS icons with magick-wasm), **OpenRaster (.ora)**, **Paint.NET (.pdn)** and
   **Photoshop (.psd, and .psb large documents)** with their layers; saves **Paint.NET (.pdn)**,
-  OpenRaster and **Photoshop (.psd)** with their layers, PNG, JPEG, WebP, DDS, TIFF, GIF (animated,
-  with Kaint's advanced options), BMP, TGA, ICO, QOI and Netpbm (PPM), plus AVIF when the browser
+  OpenRaster and **Photoshop (.psd and .psb)** with their layers, PNG, JPEG, WebP, DDS, TIFF, GIF
+  (animated, with Kaint's advanced options: reverse, back and forth, faster or slower...), BMP, TGA,
+  ICO, CUR, QOI, PCX, SGI, Farbfeld, Netpbm (PPM) and PAM, plus AVIF when the browser
   can encode it. Animated GIFs open as layers or
-  as separate images, and save from the layers or from the open images you pick. **Save Configuration** shows the encoded file and its size, with the
+  as separate images, and save from the layers or from the open images you pick. **File > GIF
+  Editor** shows any image as a simple video-editor-style timeline (media library with the open
+  and imported images, player, one clip per frame to reorder, stretch, duplicate or hide) and
+  exports it with the same GIF settings. **Save Configuration** shows the encoded file and its size, with the
   quality, bit depth, dithering and transparency threshold. **Image > Animation** edits the frame
   durations and **Image > Color Profile** converts or assigns sRGB, Adobe RGB, Display P3 or
   ProPhoto RGB (the profile is read from and embedded in PNG, JPEG, WebP and TIFF files). Drop
@@ -135,8 +140,10 @@ own history and suggest it to the host, who accepts it. The protocol is describe
   with "More" puts its sliders below the wheel when that fits better, and whatever still doesn't
   fit is scaled down. Or keep them as windows and pick the size of each one (**Settings → User
   interface → Phone**).
-- **Fingers** (phones and tablets): one finger uses the tool; two fingers move the image and pinch
-  to zoom, and the image keeps gliding when you let go. A stroke cut short by a second finger is
+- **Fingers** (phones and tablets): one finger uses the tool; two fingers move the image, pinch
+  to zoom and, turning them, **rotate** it (snapping to right angles; tap the angle in the corner to
+  straighten it; **Settings → Pen and tablet**), and the image keeps gliding when you let go. The
+  scroll bars can be hidden (on phones they are by default). A stroke cut short by a second finger is
   undone. The scrollbars get thicker under a finger, and tapping one brings its thumb under your
   finger to drag it. Dialogs and windows move with one finger on their title bar, and pinching
   one with two fingers changes its size (remembered). Buttons don't stay highlighted after a tap.
@@ -167,8 +174,9 @@ own history and suggest it to the host, who accepts it. The protocol is describe
   a Web Worker (Esc cancels them). Their algorithms are PhotoCraft's, by the ArtCraft Team and the
   PhotoCraft contributors (MIT, `licenses/PhotoCraft-LICENSE.txt`).
 - **Formats Kaint opens on its own**: JPEG XR (with jpegxr by Brion Vibber, on Microsoft's jxrlib)
-  and HEIC, JPEG XL and AVIF where the browser can't (with magick-wasm by Dirk Lemstra), loaded only
-  when such a file is opened.
+  and HEIC, JPEG XL, AVIF, OpenEXR, JPEG 2000, Radiance HDR, PFM, Sun Raster, GIMP (.xcf),
+  PlayStation TIM and macOS icons where the browser can't (with magick-wasm by Dirk Lemstra),
+  loaded only when such a file is opened.
 
 Not available on the web: Paint.NET (.dll) and native plugins and scanning. Reopening the last session's files needs a browser with access to the system's
 files (Chrome, Edge...). Browsers keep some shortcuts for themselves (Ctrl+N, Ctrl+W, Ctrl+T): use

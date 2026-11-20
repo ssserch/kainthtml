@@ -111,7 +111,9 @@ export class FloatingPanel {
     area() {
         const r = this.workspace.classList.contains("rulers") ? kRuler : 0;
         // El grosor de las barras de desplazamiento (más gruesas con el dedo).
-        const bar = this.workspace.querySelector(".scrollbar.v")?.offsetWidth || 14;
+        // Ocultas (Configuración), no cuentan.
+        const scroll = this.workspace.querySelector(".scrollbar.v");
+        const bar = this.workspace.classList.contains("no-scrollbars") ? 0 : scroll?.offsetWidth || 14;
         return { x: r, y: r, w: this.workspace.clientWidth - bar - r, h: this.workspace.clientHeight - bar - r };
     }
 
@@ -463,17 +465,32 @@ export function toolsPanel(app) {
 
 export function historyPanel(app) {
     const list = el("div", { className: "list history-list" });
+    // Una fila por paso, que se reutiliza: antes la lista se rehacía entera (con todos sus iconos) en
+    // cada paso, y con un historial largo cada trazo iba más lento.
+    const rows = new WeakMap();
     const refresh = () => {
-        list.replaceChildren();
         const doc = app.doc;
-        if (!doc)
+        if (!doc) {
+            list.replaceChildren();
             return;
-        doc.history.steps.forEach((step, i) => {
-            const row = el("div", { className: "row" + (i === doc.history.index ? " selected" : "") + (i > doc.history.index ? " undone" : "") },
-                           [icon(step.icon || "document-new", 16), el("span", { textContent: step.name })]);
-            row.addEventListener("click", () => app.jumpHistory(i));
-            list.appendChild(row);
+        }
+        const wanted = doc.history.steps.map((step, i) => {
+            let row = rows.get(step);
+            if (!row || row.iconName !== (step.icon || "document-new")) {
+                row = el("div", { className: "row" }, [icon(step.icon || "document-new", 16), el("span", { textContent: step.name })]);
+                row.iconName = step.icon || "document-new";
+                row.addEventListener("click", () => app.jumpHistory(row.stepIndex));
+                rows.set(step, row);
+            }
+            row.stepIndex = i;
+            if (row.lastChild.textContent !== step.name)
+                row.lastChild.textContent = step.name;
+            row.classList.toggle("selected", i === doc.history.index);
+            row.classList.toggle("undone", i > doc.history.index);
+            return row;
         });
+        if (wanted.length !== list.children.length || wanted.some((r, i) => list.children[i] !== r))
+            list.replaceChildren(...wanted);
         // Solo se desplaza la lista (scrollIntoView movería también el área de trabajo).
         const row = list.querySelector(".selected");
         if (row) {
